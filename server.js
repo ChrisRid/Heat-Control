@@ -38,7 +38,7 @@ const RATE_LIMIT_GENERAL_MAX = 100;
 const RATE_LIMIT_AUTH_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_AUTH_MAX = 10;
 
-// Program encoding: A=10°C, B=11°C, ... U=30°C (21 letters for temps 10-30)
+// Program encoding: A=10Â°C, B=11Â°C, ... U=30Â°C (21 letters for temps 10-30)
 const TEMP_MIN = 10;
 const TEMP_MAX = 30;
 const TEMP_OFFSET = 'A'.charCodeAt(0) - TEMP_MIN;
@@ -59,7 +59,7 @@ const pool = new Pool({
 async function initDatabase() {
     try {
         await pool.query('SELECT NOW()');
-        console.log('✓ Database connected');
+        console.log('âœ“ Database connected');
         
         // Create auth_requests table if it doesn't exist
         // This stores pending auth requests (replaces in-memory pendingAuth)
@@ -101,9 +101,9 @@ async function initDatabase() {
             ON rate_limits(key)
         `);
         
-        console.log('✓ Database tables initialized');
+        console.log('âœ“ Database tables initialized');
     } catch (err) {
-        console.error('✗ Database initialization failed:', err.message);
+        console.error('âœ— Database initialization failed:', err.message);
     }
 }
 
@@ -290,7 +290,7 @@ function decodeProgram(encoded) {
 }
 
 /**
- * Get default program (all hours at 18°C)
+ * Get default program (all hours at 18Â°C)
  */
 function getDefaultProgram() {
     return Array(7).fill(null).map(() => Array(24).fill(18));
@@ -993,7 +993,7 @@ app.post('/api/hub/:deviceId/report', async (req, res) => {
         
         const result = await pool.query(
             'UPDATE "Devices" SET current_temp = $1 WHERE device_id = $2 AND device_secret_hash = $3 RETURNING device_id',
-            [Math.round(tempVal * 10) / 10, deviceId, secretHash]
+            [Math.round(tempVal), deviceId, secretHash]
         );
         
         if (result.rows.length === 0) {
@@ -1039,7 +1039,7 @@ app.use((err, req, res, next) => {
 // ============================================================================
 
 app.listen(PORT, () => {
-    console.log(`🌡️  Thermostat API running on port ${PORT}`);
+    console.log(`ðŸŒ¡ï¸  Thermostat API running on port ${PORT}`);
     console.log(`   Environment: ${NODE_ENV}`);
 });
 
