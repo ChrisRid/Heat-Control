@@ -77,7 +77,7 @@
 </head>
 <body>
     <div class="auth" id="auth">
-        <div class="auth-icon" id="authIcon">🔐</div>
+        <div class="auth-icon" id="authIcon">&#x1F512;</div>
         <h1 id="authTitle">Authenticate</h1>
         <p id="authMsg">Press the button below, then press the auth button on your hub within 60 seconds.</p>
         <button class="auth-btn" id="authBtn">Start Authentication</button>
@@ -88,13 +88,13 @@
         <div class="status" id="status"><span class="status-dot"></span><span id="statusTxt">Connecting...</span></div>
         
         <div class="card">
-            <div class="heat" id="heat">🔥</div>
+            <div class="heat" id="heat">&#x1F525;</div>
             <div class="label">Current Temperature</div>
-            <div class="current"><span id="cur">--</span><span>°C</span></div>
+            <div class="current"><span id="cur">--</span><span>&deg;C</span></div>
             <div class="label">Target Temperature</div>
             <div class="target-row">
-                <button class="btn" id="dec">−</button>
-                <div class="target"><span id="tar">--</span><span>°C</span></div>
+                <button class="btn" id="dec">&minus;</button>
+                <div class="target"><span id="tar">--</span><span>&deg;C</span></div>
                 <button class="btn" id="inc">+</button>
             </div>
             <div class="section">
@@ -117,10 +117,10 @@
                 <div class="label" style="margin-top:16px">Weekly Schedule</div>
                 <div class="days" id="days"></div>
                 <div class="timeline"><canvas id="canvas"></canvas></div>
-                <div class="timeline-help">Tap to add • Drag to move • Long-press to delete</div>
+                <div class="timeline-help">Tap to add &bull; Drag to move &bull; Long-press to delete</div>
                 <div class="sched-btns">
-                    <button class="sched-btn" id="copyPrev">← Copy Prev</button>
-                    <button class="sched-btn" id="copyNext">Copy Next →</button>
+                    <button class="sched-btn" id="copyPrev">&larr; Copy Prev</button>
+                    <button class="sched-btn" id="copyNext">Copy Next &rarr;</button>
                     <button class="sched-btn danger" id="clearDay">Clear Day</button>
                 </div>
             </div>
@@ -134,7 +134,14 @@ const API = '/api';
 const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const TEMP_MIN = 15, TEMP_MAX = 30;
 
-let deviceId = new URLSearchParams(location.search).get('id');
+// Sanitize and validate device ID from URL
+function getDeviceId() {
+    const raw = new URLSearchParams(location.search).get('id') || '';
+    const sanitized = raw.replace(/[^a-z0-9]/g, '').substring(0, 32);
+    return /^[a-z0-9]{32}$/.test(sanitized) ? sanitized : null;
+}
+
+let deviceId = getDeviceId();
 let state = { cur: null, tar: 21, mode: 0, boost: 0, program: '' };
 let selectedDay = 0;
 let schedule = [[],[],[],[],[],[],[]];
@@ -149,11 +156,11 @@ const cur = $('cur'), tar = $('tar'), sync = $('sync');
 const canvas = $('canvas'), ctx = canvas.getContext('2d');
 
 // Init
-if (!deviceId || !/^[a-z0-9]{32}$/.test(deviceId)) {
+if (!deviceId) {
     authTitle.textContent = 'Invalid Device';
     authMsg.textContent = 'Scan a valid QR code from your hub.';
     authBtn.classList.add('hidden');
-    authIcon.textContent = '⚠️';
+    authIcon.innerHTML = '&#x26A0;';
 } else {
     checkAuth();
 }
@@ -196,7 +203,7 @@ async function startAuth() {
                 const d = await r.json();
                 if (d.status === 'authenticated') {
                     clearInterval(poll);
-                    authIcon.textContent = '✓';
+                    authIcon.innerHTML = '&#x2713;';
                     authTitle.textContent = 'Connected!';
                     authMsg.textContent = '';
                     setTimeout(showMain, 1000);
@@ -212,7 +219,7 @@ async function startAuth() {
 }
 
 function resetAuth(err) {
-    authIcon.textContent = '🔐';
+    authIcon.innerHTML = '&#x1F512;';
     authTitle.textContent = 'Authenticate';
     authMsg.textContent = 'Press the button below, then press the auth button on your hub within 60 seconds.';
     authBtn.classList.remove('hidden');
@@ -253,7 +260,7 @@ function setStatus(type, txt) {
 
 function showSync(ok) {
     sync.className = 'sync show ' + (ok ? 'ok' : 'err');
-    sync.textContent = ok ? '✓ Saved' : '✗ Failed';
+    sync.textContent = ok ? '\u2713 Saved' : '\u2717 Failed';
     setTimeout(() => sync.classList.remove('show'), 2000);
 }
 
@@ -399,7 +406,7 @@ function drawTimeline() {
     ctx.textAlign = 'center';
     for (let h = 0; h <= 24; h += 2) ctx.fillText(String(h).padStart(2, '0'), hourToX(h), a.b + 11);
     ctx.textAlign = 'right';
-    for (let t = TEMP_MIN; t <= TEMP_MAX; t += 3) ctx.fillText(t + '°', a.l - 5, tempToY(t) + 3);
+    for (let t = TEMP_MIN; t <= TEMP_MAX; t += 3) ctx.fillText(t + '\u00B0', a.l - 5, tempToY(t) + 3);
     
     // Line
     const pts = (schedule[selectedDay] || []).slice().sort((a, b) => a.hour - b.hour);
