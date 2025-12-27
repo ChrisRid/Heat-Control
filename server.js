@@ -2,6 +2,11 @@
  * Thermostat Control Backend API
  * Single-file REST API for thermostat device management
  * 
+ * AUTHENTICATION: Uses ECDSA asymmetric key authentication
+ * - Devices hold private keys (never transmitted)
+ * - Server stores public keys
+ * - Challenge-response with nonce prevents replay attacks
+ * 
  * SCALABILITY NOTES:
  * - Auth state is stored in database (not memory) for multi-instance support
  * - Rate limiting uses database for shared state across instances
@@ -29,6 +34,9 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 // Auth timeout in milliseconds (60 seconds)
 const AUTH_TIMEOUT_MS = 60000;
 
+// Timestamp validity window in seconds (±60 seconds)
+const TIMESTAMP_WINDOW_SECONDS = 60;
+
 // Max pending auth requests per device (prevents queue flooding)
 const MAX_PENDING_AUTH_PER_DEVICE = 10;
 
@@ -38,7 +46,7 @@ const RATE_LIMIT_GENERAL_MAX = 100;
 const RATE_LIMIT_AUTH_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_AUTH_MAX = 10;
 
-// Program encoding: A=10Â°C, B=11Â°C, ... U=30Â°C (21 letters for temps 10-30)
+// Program encoding: A=10°C, B=11°C, ... U=30°C (21 letters for temps 10-30)
 const TEMP_MIN = 10;
 const TEMP_MAX = 30;
 const TEMP_OFFSET = 'A'.charCodeAt(0) - TEMP_MIN;
@@ -55,26 +63,26 @@ const pool = new Pool({
     connectionTimeoutMillis: 2000,
 });
 
-// Test database connection and ensure auth_requests table exists
+// Test database connection and ensure tables exist
 async function initDatabase() {
     try {
         await pool.query('SELECT NOW()');
-        console.log('âœ“ Database connected');
+        console.log('✓ Database connected');
         
         // Create auth_requests table if it doesn't exist
-        // This stores pending auth requests (replaces in-memory pendingAuth)
         await pool.query(`
             CREATE TABLE IF NOT EXISTS auth_requests (
                 id SERIAL PRIMARY KEY,
                 device_id TEXT NOT NULL,
                 client_id TEXT UNIQUE NOT NULL,
+                nonce TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT NOW(),
                 expires_at TIMESTAMP NOT NULL,
                 verified BOOLEAN DEFAULT FALSE
             )
         `);
         
-        // Create index for efficient lookups
+        // Create indexes for efficient lookups
         await pool.query(`
             CREATE INDEX IF NOT EXISTS idx_auth_requests_device_id 
             ON auth_requests(device_id)
@@ -83,6 +91,11 @@ async function initDatabase() {
         await pool.query(`
             CREATE INDEX IF NOT EXISTS idx_auth_requests_client_id 
             ON auth_requests(client_id)
+        `);
+        
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_auth_requests_nonce 
+            ON auth_requests(nonce)
         `);
         
         // Create rate_limits table for distributed rate limiting
@@ -101,9 +114,9 @@ async function initDatabase() {
             ON rate_limits(key)
         `);
         
-        console.log('âœ“ Database tables initialized');
+        console.log('✓ Database tables initialized');
     } catch (err) {
-        console.error('âœ— Database initialization failed:', err.message);
+        console.error('✗ Database initialization failed:', err.message);
     }
 }
 
@@ -229,9 +242,16 @@ function sha256(value) {
 }
 
 /**
- * Generate a secure random token
+ * Generate a secure random token (256 bits)
  */
 function generateToken() {
+    return crypto.randomBytes(32).toString('hex');
+}
+
+/**
+ * Generate a cryptographically secure nonce (256 bits)
+ */
+function generateNonce() {
     return crypto.randomBytes(32).toString('hex');
 }
 
@@ -249,6 +269,44 @@ function secureCompare(a, b) {
  */
 function isValidDeviceId(deviceId) {
     return typeof deviceId === 'string' && /^[a-z0-9]{32}$/.test(deviceId);
+}
+
+/**
+ * Validate nonce format (64 hex characters)
+ */
+function isValidNonce(nonce) {
+    return typeof nonce === 'string' && /^[a-f0-9]{64}$/.test(nonce);
+}
+
+/**
+ * Check if timestamp is within acceptable window
+ * @param {number} timestamp - Unix timestamp in seconds
+ * @param {number} windowSeconds - Acceptable drift in seconds
+ * @returns {boolean}
+ */
+function isTimestampValid(timestamp, windowSeconds = TIMESTAMP_WINDOW_SECONDS) {
+    const now = Math.floor(Date.now() / 1000);
+    return Math.abs(now - timestamp) <= windowSeconds;
+}
+
+/**
+ * Verify an ECDSA signature
+ * @param {string} message - The signed message
+ * @param {string} signature - Base64-encoded signature
+ * @param {string} publicKeyPem - PEM-encoded public key
+ * @returns {boolean} - Whether signature is valid
+ */
+function verifySignature(message, signature, publicKeyPem) {
+    try {
+        const verify = crypto.createVerify('SHA256');
+        verify.update(message);
+        verify.end();
+        
+        return verify.verify(publicKeyPem, signature, 'base64');
+    } catch (err) {
+        console.error('Signature verification error:', err.message);
+        return false;
+    }
 }
 
 /**
@@ -290,7 +348,7 @@ function decodeProgram(encoded) {
 }
 
 /**
- * Get default program (all hours at 18Â°C)
+ * Get default program (all hours at 18°C)
  */
 function getDefaultProgram() {
     return Array(7).fill(null).map(() => Array(24).fill(18));
@@ -342,15 +400,12 @@ function convertHourlyToPoints(hourly) {
     return points;
 }
 
-// Auth state is now stored in database (auth_requests table)
-// This supports multi-instance deployment and survives server restarts
-
 // ============================================================================
 // AUTHENTICATION MIDDLEWARE
 // ============================================================================
 
 /**
- * Middleware to verify authentication
+ * Middleware to verify browser authentication (cookie-based)
  */
 async function requireAuth(req, res, next) {
     const deviceId = req.params.deviceId || req.query.id;
@@ -397,6 +452,150 @@ app.get('/api/health', (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// DEVICE PROVISIONING
+// ----------------------------------------------------------------------------
+
+/**
+ * Register a device's public key
+ * Called during device setup/provisioning
+ * 
+ * Security: This endpoint requires the device secret (legacy auth)
+ * to prevent unauthorized key registration
+ * 
+ * POST /api/device/provision
+ * Body: { deviceId, deviceSecret, publicKey }
+ */
+app.post('/api/device/provision', authLimiter, async (req, res) => {
+    const { deviceId, deviceSecret, publicKey } = req.body;
+    
+    if (!deviceId || !isValidDeviceId(deviceId)) {
+        return res.status(400).json({ error: 'Invalid device ID' });
+    }
+    
+    if (!deviceSecret || typeof deviceSecret !== 'string') {
+        return res.status(400).json({ error: 'Device secret required' });
+    }
+    
+    if (!publicKey || typeof publicKey !== 'string') {
+        return res.status(400).json({ error: 'Public key required' });
+    }
+    
+    // Validate public key format (should be PEM)
+    if (!publicKey.includes('-----BEGIN PUBLIC KEY-----')) {
+        return res.status(400).json({ error: 'Invalid public key format (expected PEM)' });
+    }
+    
+    try {
+        // Verify device secret
+        const secretHash = sha256(deviceSecret);
+        
+        const result = await pool.query(
+            'SELECT device_id, public_key FROM "Devices" WHERE device_id = $1 AND device_secret_hash = $2',
+            [deviceId, secretHash]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(401).json({ error: 'Invalid device credentials' });
+        }
+        
+        // Check if already provisioned
+        if (result.rows[0].public_key) {
+            return res.status(400).json({ 
+                error: 'Device already provisioned',
+                hint: 'To re-provision, use /api/device/reprovision endpoint'
+            });
+        }
+        
+        // Validate the public key is actually valid ECDSA
+        try {
+            crypto.createPublicKey(publicKey);
+        } catch (keyErr) {
+            return res.status(400).json({ error: 'Invalid public key: ' + keyErr.message });
+        }
+        
+        // Store the public key
+        await pool.query(
+            'UPDATE "Devices" SET public_key = $1 WHERE device_id = $2',
+            [publicKey, deviceId]
+        );
+        
+        console.log(`✓ Device ${deviceId} provisioned with public key`);
+        res.json({ success: true, message: 'Device provisioned successfully' });
+        
+    } catch (err) {
+        console.error('Provisioning error:', err);
+        res.status(500).json({ error: 'Provisioning failed' });
+    }
+});
+
+/**
+ * Re-provision a device (replaces existing key)
+ * 
+ * POST /api/device/reprovision
+ * Body: { deviceId, deviceSecret, publicKey }
+ */
+app.post('/api/device/reprovision', authLimiter, async (req, res) => {
+    const { deviceId, deviceSecret, publicKey } = req.body;
+    
+    if (!deviceId || !isValidDeviceId(deviceId)) {
+        return res.status(400).json({ error: 'Invalid device ID' });
+    }
+    
+    if (!deviceSecret || typeof deviceSecret !== 'string') {
+        return res.status(400).json({ error: 'Device secret required' });
+    }
+    
+    if (!publicKey || typeof publicKey !== 'string') {
+        return res.status(400).json({ error: 'Public key required' });
+    }
+    
+    // Validate public key format
+    if (!publicKey.includes('-----BEGIN PUBLIC KEY-----')) {
+        return res.status(400).json({ error: 'Invalid public key format (expected PEM)' });
+    }
+    
+    try {
+        // Verify device secret
+        const secretHash = sha256(deviceSecret);
+        
+        const result = await pool.query(
+            'SELECT device_id FROM "Devices" WHERE device_id = $1 AND device_secret_hash = $2',
+            [deviceId, secretHash]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(401).json({ error: 'Invalid device credentials' });
+        }
+        
+        // Validate the public key
+        try {
+            crypto.createPublicKey(publicKey);
+        } catch (keyErr) {
+            return res.status(400).json({ error: 'Invalid public key: ' + keyErr.message });
+        }
+        
+        // Replace the public key and clear any pending auth state
+        await pool.query(
+            'UPDATE "Devices" SET public_key = $1, pending_nonce = NULL, auth_token_hash = NULL WHERE device_id = $2',
+            [publicKey, deviceId]
+        );
+        
+        // Clear any pending auth requests
+        await pool.query(
+            'DELETE FROM auth_requests WHERE device_id = $1',
+            [deviceId]
+        );
+        
+        console.log(`✓ Device ${deviceId} re-provisioned with new public key`);
+        res.json({ success: true, message: 'Device re-provisioned successfully' });
+        
+    } catch (err) {
+        console.error('Re-provisioning error:', err);
+        res.status(500).json({ error: 'Re-provisioning failed' });
+    }
+});
+
+// ----------------------------------------------------------------------------
 // AUTHENTICATION ENDPOINTS
 // ----------------------------------------------------------------------------
 
@@ -418,23 +617,21 @@ app.get('/api/auth/check', authLimiter, async (req, res) => {
     // Check if device exists
     try {
         const deviceResult = await pool.query(
-            'SELECT device_id FROM "Devices" WHERE device_id = $1',
+            'SELECT device_id, public_key FROM "Devices" WHERE device_id = $1',
             [deviceId]
         );
         
         if (deviceResult.rows.length === 0) {
             return res.status(404).json({ error: 'Device not found' });
         }
-    } catch (err) {
-        console.error('Device check error:', err);
-        return res.status(500).json({ error: 'Database error' });
-    }
-    
-    if (!authToken) {
-        return res.json({ authenticated: false });
-    }
-    
-    try {
+        
+        // Check if device is provisioned
+        const isProvisioned = !!deviceResult.rows[0].public_key;
+        
+        if (!authToken) {
+            return res.json({ authenticated: false, provisioned: isProvisioned });
+        }
+        
         const authTokenHash = sha256(authToken);
         
         const result = await pool.query(
@@ -442,7 +639,10 @@ app.get('/api/auth/check', authLimiter, async (req, res) => {
             [deviceId, authTokenHash]
         );
         
-        res.json({ authenticated: result.rows.length > 0 });
+        res.json({ 
+            authenticated: result.rows.length > 0,
+            provisioned: isProvisioned
+        });
     } catch (err) {
         console.error('Auth check error:', err);
         res.status(500).json({ error: 'Authentication check failed' });
@@ -451,6 +651,8 @@ app.get('/api/auth/check', authLimiter, async (req, res) => {
 
 /**
  * Start authentication process (user waiting for button press)
+ * Generates a nonce challenge for the device to sign
+ * 
  * POST /api/auth/start
  * Body: { deviceId: string }
  */
@@ -461,15 +663,22 @@ app.post('/api/auth/start', authLimiter, async (req, res) => {
         return res.status(400).json({ error: 'Invalid device ID' });
     }
     
-    // Check if device exists
+    // Check if device exists AND has a public key registered
     try {
         const deviceResult = await pool.query(
-            'SELECT device_id FROM "Devices" WHERE device_id = $1',
+            'SELECT device_id, public_key FROM "Devices" WHERE device_id = $1',
             [deviceId]
         );
         
         if (deviceResult.rows.length === 0) {
             return res.status(404).json({ error: 'Device not found' });
+        }
+        
+        if (!deviceResult.rows[0].public_key) {
+            return res.status(400).json({ 
+                error: 'Device not yet provisioned',
+                hint: 'The device needs to register its public key first'
+            });
         }
     } catch (err) {
         console.error('Device check error:', err);
@@ -493,21 +702,22 @@ app.post('/api/auth/start', authLimiter, async (req, res) => {
         console.error('Count check error:', err);
     }
     
-    // Generate a unique client ID for this auth request
+    // Generate unique identifiers
     const clientId = generateToken();
+    const nonce = generateNonce();
     const expiresAt = new Date(Date.now() + AUTH_TIMEOUT_MS);
     
     // Store auth request in database
     try {
         await pool.query(
-            'INSERT INTO auth_requests (device_id, client_id, expires_at) VALUES ($1, $2, $3)',
-            [deviceId, clientId, expiresAt]
+            'INSERT INTO auth_requests (device_id, client_id, nonce, expires_at) VALUES ($1, $2, $3, $4)',
+            [deviceId, clientId, nonce, expiresAt]
         );
         
-        // Update device pair status
+        // Store nonce on device record so hub can retrieve it during polling
         await pool.query(
-            'UPDATE "Devices" SET pair = $1 WHERE device_id = $2',
-            [JSON.stringify({ pending: true, expiresAt: expiresAt.toISOString() }), deviceId]
+            'UPDATE "Devices" SET pending_nonce = $1 WHERE device_id = $2',
+            [nonce, deviceId]
         );
     } catch (err) {
         console.error('Failed to create auth request:', err);
@@ -540,7 +750,7 @@ app.get('/api/auth/poll', authLimiter, async (req, res) => {
     try {
         // Get this client's auth request
         const clientResult = await pool.query(
-            'SELECT id, created_at, expires_at, verified FROM auth_requests WHERE client_id = $1 AND device_id = $2',
+            'SELECT id, nonce, created_at, expires_at, verified FROM auth_requests WHERE client_id = $1 AND device_id = $2',
             [clientId, deviceId]
         );
         
@@ -557,44 +767,34 @@ app.get('/api/auth/poll', authLimiter, async (req, res) => {
             return res.json({ status: 'timeout', message: 'Authentication timed out' });
         }
         
-        // Check if this client should receive auth (verified AND first in queue)
+        // Check if this client's request has been verified
         if (clientRequest.verified) {
-            // Get position in queue (only among verified requests for this device)
-            const positionResult = await pool.query(`
-                SELECT id FROM auth_requests 
-                WHERE device_id = $1 AND verified = TRUE AND expires_at > NOW()
-                ORDER BY created_at ASC
-                LIMIT 1
-            `, [deviceId]);
+            // This client is verified - issue auth token
+            const authToken = generateToken();
+            const authTokenHash = sha256(authToken);
             
-            if (positionResult.rows.length > 0 && positionResult.rows[0].id === clientRequest.id) {
-                // This client is first in the verified queue - issue auth token
-                const authToken = generateToken();
-                const authTokenHash = sha256(authToken);
-                
-                // Update device with new auth token and clear pair status
-                await pool.query(
-                    'UPDATE "Devices" SET auth_token_hash = $1, pair = NULL WHERE device_id = $2',
-                    [authTokenHash, deviceId]
-                );
-                
-                // Delete this auth request (and any others for this device that are verified)
-                await pool.query('DELETE FROM auth_requests WHERE id = $1', [clientRequest.id]);
-                
-                // Set device-specific cookie (never expires = 10 years)
-                const cookieName = `auth_${deviceId}`;
-                res.cookie(cookieName, authToken, {
-                    httpOnly: true,
-                    secure: NODE_ENV === 'production',
-                    sameSite: 'strict',
-                    maxAge: 10 * 365 * 24 * 60 * 60 * 1000 // 10 years
-                });
-                
-                return res.json({ status: 'authenticated', message: 'Successfully authenticated' });
-            }
+            // Update device with new auth token and clear pending nonce
+            await pool.query(
+                'UPDATE "Devices" SET auth_token_hash = $1, pending_nonce = NULL WHERE device_id = $2',
+                [authTokenHash, deviceId]
+            );
+            
+            // Delete this auth request
+            await pool.query('DELETE FROM auth_requests WHERE id = $1', [clientRequest.id]);
+            
+            // Set device-specific cookie (10 years expiry)
+            const cookieName = `auth_${deviceId}`;
+            res.cookie(cookieName, authToken, {
+                httpOnly: true,
+                secure: NODE_ENV === 'production',
+                sameSite: 'strict',
+                maxAge: 10 * 365 * 24 * 60 * 60 * 1000 // 10 years
+            });
+            
+            return res.json({ status: 'authenticated', message: 'Successfully authenticated' });
         }
         
-        // Still waiting - calculate position
+        // Still waiting - calculate position in queue
         const positionResult = await pool.query(`
             SELECT COUNT(*) as position FROM auth_requests 
             WHERE device_id = $1 AND expires_at > NOW() AND created_at < $2
@@ -616,53 +816,107 @@ app.get('/api/auth/poll', authLimiter, async (req, res) => {
 });
 
 /**
- * Hub sends device secret to authenticate user
+ * Hub verifies user authentication with signed challenge
+ * Uses ECDSA signature verification
+ * 
  * POST /api/auth/verify
- * Body: { deviceId: string, deviceSecret: string }
+ * Body: { deviceId, nonce, timestamp, signature }
  */
 app.post('/api/auth/verify', authLimiter, async (req, res) => {
-    const { deviceId, deviceSecret } = req.body;
+    const { deviceId, nonce, timestamp, signature } = req.body;
     
+    // Validate deviceId
     if (!deviceId || !isValidDeviceId(deviceId)) {
         return res.status(400).json({ error: 'Invalid device ID' });
     }
     
-    if (!deviceSecret || typeof deviceSecret !== 'string') {
-        return res.status(400).json({ error: 'Device secret required' });
+    // Validate nonce format
+    if (!nonce || !isValidNonce(nonce)) {
+        return res.status(400).json({ error: 'Invalid nonce format' });
     }
     
-    // Verify device secret
+    // Validate timestamp
+    if (timestamp === undefined || typeof timestamp !== 'number') {
+        return res.status(400).json({ error: 'Invalid timestamp' });
+    }
+    
+    // Validate signature
+    if (!signature || typeof signature !== 'string') {
+        return res.status(400).json({ error: 'Invalid signature' });
+    }
+    
+    // Check timestamp is within acceptable window (±60 seconds)
+    if (!isTimestampValid(timestamp)) {
+        return res.status(401).json({ 
+            error: 'Timestamp out of range',
+            serverTime: Math.floor(Date.now() / 1000),
+            receivedTime: timestamp
+        });
+    }
+    
     try {
-        const deviceSecretHash = sha256(deviceSecret);
-        
-        const result = await pool.query(
-            'SELECT device_id FROM "Devices" WHERE device_id = $1 AND device_secret_hash = $2',
-            [deviceId, deviceSecretHash]
-        );
-        
-        if (result.rows.length === 0) {
-            return res.status(401).json({ error: 'Invalid device credentials' });
-        }
-        
-        // Check if there are pending auth requests for this device
-        const pendingResult = await pool.query(
-            'SELECT id FROM auth_requests WHERE device_id = $1 AND expires_at > NOW() AND verified = FALSE ORDER BY created_at ASC LIMIT 1',
+        // Get device's public key and pending nonce
+        const deviceResult = await pool.query(
+            'SELECT public_key, pending_nonce FROM "Devices" WHERE device_id = $1',
             [deviceId]
         );
         
-        if (pendingResult.rows.length === 0) {
-            return res.status(400).json({ error: 'No pending authentication requests' });
+        if (deviceResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Device not found' });
         }
         
-        // Mark the FIRST pending request as verified (FIFO - only the longest-waiting user)
+        const device = deviceResult.rows[0];
+        
+        if (!device.public_key) {
+            return res.status(400).json({ error: 'Device not provisioned' });
+        }
+        
+        // Verify nonce matches what we're expecting
+        if (!device.pending_nonce) {
+            return res.status(400).json({ error: 'No pending authentication request' });
+        }
+        
+        if (!secureCompare(device.pending_nonce, nonce)) {
+            return res.status(401).json({ error: 'Invalid nonce' });
+        }
+        
+        // Reconstruct the message that was signed
+        const message = `${deviceId}:${nonce}:${timestamp}`;
+        
+        // Verify the ECDSA signature
+        if (!verifySignature(message, signature, device.public_key)) {
+            return res.status(401).json({ error: 'Invalid signature' });
+        }
+        
+        // Signature valid! Find the pending auth request with this nonce
+        const pendingResult = await pool.query(
+            'SELECT id FROM auth_requests WHERE device_id = $1 AND nonce = $2 AND expires_at > NOW() AND verified = FALSE ORDER BY created_at ASC LIMIT 1',
+            [deviceId, nonce]
+        );
+        
+        if (pendingResult.rows.length === 0) {
+            // This could happen if the request expired between nonce check and here
+            return res.status(400).json({ error: 'No matching pending authentication request' });
+        }
+        
+        // Mark the FIRST auth request with this nonce as verified
+        // (There should only be one, since nonce is unique per /auth/start call)
         await pool.query(
             'UPDATE auth_requests SET verified = TRUE WHERE id = $1',
             [pendingResult.rows[0].id]
         );
         
+        // Clear the pending nonce (prevents replay with same nonce)
+        await pool.query(
+            'UPDATE "Devices" SET pending_nonce = NULL WHERE device_id = $1',
+            [deviceId]
+        );
+        
+        console.log(`✓ Device ${deviceId} verified authentication via ECDSA signature`);
         res.json({ success: true, message: 'Device verified, user will be authenticated' });
+        
     } catch (err) {
-        console.error('Device verification error:', err);
+        console.error('Verification error:', err);
         res.status(500).json({ error: 'Verification failed' });
     }
 });
@@ -925,6 +1179,8 @@ app.put('/api/device/:deviceId/program', requireAuth, async (req, res) => {
 
 /**
  * Device polls for current settings
+ * Returns pending nonce if there's an auth request waiting
+ * 
  * GET /api/hub/:deviceId/poll
  * Query: secret=<device_secret>
  */
@@ -944,7 +1200,7 @@ app.get('/api/hub/:deviceId/poll', async (req, res) => {
         const secretHash = sha256(secret);
         
         const result = await pool.query(
-            'SELECT set_temp, boost, mode, program FROM "Devices" WHERE device_id = $1 AND device_secret_hash = $2',
+            'SELECT set_temp, boost, mode, program, pending_nonce FROM "Devices" WHERE device_id = $1 AND device_secret_hash = $2',
             [deviceId, secretHash]
         );
         
@@ -958,7 +1214,8 @@ app.get('/api/hub/:deviceId/poll', async (req, res) => {
             setTemp: device.set_temp,
             boost: device.boost,
             mode: device.mode ? 'program' : 'manual',
-            program: device.program || ''
+            program: device.program || '',
+            pendingNonce: device.pending_nonce || null
         });
     } catch (err) {
         console.error('Hub poll error:', err);
@@ -1039,8 +1296,9 @@ app.use((err, req, res, next) => {
 // ============================================================================
 
 app.listen(PORT, () => {
-    console.log(`ðŸŒ¡ï¸  Thermostat API running on port ${PORT}`);
+    console.log(`🌡️  Thermostat API running on port ${PORT}`);
     console.log(`   Environment: ${NODE_ENV}`);
+    console.log(`   Auth: ECDSA asymmetric key authentication`);
 });
 
 module.exports = app;
