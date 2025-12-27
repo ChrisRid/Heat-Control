@@ -7,45 +7,153 @@ const path = require('path');
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public')));
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-// Reformat PEM key (fix spacing/newlines)
-function formatPEM(key) {
-    // Remove all whitespace and headers
-    let b64 = key.replace(/-----BEGIN [^-]+-----/, '')
-                 .replace(/-----END [^-]+-----/, '')
-                 .replace(/\s/g, '');
-    // Re-add headers with proper newlines
-    return '-----BEGIN PUBLIC KEY-----\n' + 
-           b64.match(/.{1,64}/g).join('\n') + 
-           '\n-----END PUBLIC KEY-----';
-}
+// Standardized error response
+const sendError = (res, status, message, extra = {}) => {
+    res.status(status).json({ success: false, error: message, ...extra });
+};
+
+// Audit logger
+const auditLog = (event, deviceId, details = {}) => {
+    const timestamp = new Date().toISOString();
+    console.log(JSON.stringify({ timestamp, event, deviceId, ...details }));
+};
+
+// Rate limiter (100/min max, 5/sec regen, 1min memory)
+const rateLimits = new Map();
+const RATE_MAX = 100, RATE_REGEN = 5, RATE_WINDOW = 60000;
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, data] of rateLimits) {
+        if (now - data.lastSeen > RATE_WINDOW) rateLimits.delete(key);
+    }
+}, 10000);
+
+const rateLimit = (req, res, next) => {
+    const key = req.ip;
+    const now = Date.now();
+    let data = rateLimits.get(key);
+    
+    if (!data) {
+        data = { tokens: RATE_MAX, lastUpdate: now, lastSeen: now };
+        rateLimits.set(key, data);
+    }
+    
+    const elapsed = (now - data.lastUpdate) / 1000;
+    data.tokens = Math.min(RATE_MAX, data.tokens + elapsed * RATE_REGEN);
+    data.lastUpdate = now;
+    data.lastSeen = now;
+    
+    if (data.tokens < 1) {
+        return sendError(res, 429, 'Rate limit exceeded');
+    }
+    
+    data.tokens--;
+    next();
+};
+
+app.use(rateLimit);
+
+// HTTPS enforcement
+app.use((req, res, next) => {
+    if (req.headers['x-forwarded-proto'] === 'https' || req.secure || req.hostname === 'localhost') {
+        return next();
+    }
+    sendError(res, 403, 'HTTPS required');
+});
+
+// Device ID validation
+const isValidDeviceId = (id) => typeof id === 'string' && /^[a-z0-9]{32}$/.test(id);
+
+const validateDeviceId = (source = 'params') => (req, res, next) => {
+    const id = source === 'params' ? req.params.id : 
+               source === 'query' ? req.query.id : 
+               req.body.deviceId;
+    if (!isValidDeviceId(id)) {
+        return sendError(res, 400, 'Invalid device ID');
+    }
+    req.deviceId = id;
+    next();
+};
+
+// Reformat PEM key
+const formatPEM = (key) => {
+    const b64 = key.replace(/-----BEGIN [^-]+-----/, '')
+                   .replace(/-----END [^-]+-----/, '')
+                   .replace(/\s/g, '');
+    return '-----BEGIN PUBLIC KEY-----\n' + b64.match(/.{1,64}/g).join('\n') + '\n-----END PUBLIC KEY-----';
+};
 
 // Utility functions
 const hash = (str) => crypto.createHash('sha256').update(str).digest('hex');
 const randomHex = (bytes) => crypto.randomBytes(bytes).toString('hex');
 
+// Verify hub signature (deviceId + timestamp)
+const verifyHubSignature = async (deviceId, timestamp, signature) => {
+    const now = Date.now();
+    const ts = parseInt(timestamp, 10);
+    if (isNaN(ts) || Math.abs(now - ts) > 300000) return false; // 5 min window
+    
+    try {
+        const result = await pool.query(
+            'SELECT auth_public_key FROM authentication WHERE device_id = $1',
+            [deviceId]
+        );
+        if (result.rows.length === 0) return false;
+        
+        const formattedKey = formatPEM(result.rows[0].auth_public_key);
+        const message = deviceId + timestamp;
+        const verify = crypto.createVerify('RSA-SHA256');
+        verify.update(message);
+        return verify.verify(formattedKey, signature, 'base64');
+    } catch (err) {
+        auditLog('signature_verify_error', deviceId, { error: err.message });
+        return false;
+    }
+};
+
+// Middleware for hub authentication
+const requireHubAuth = async (req, res, next) => {
+    const { deviceId, timestamp, signature } = req.body.deviceId ? req.body : req.query;
+    
+    if (!isValidDeviceId(deviceId)) {
+        return sendError(res, 400, 'Invalid device ID');
+    }
+    if (!timestamp || !signature) {
+        return sendError(res, 401, 'Missing authentication');
+    }
+    
+    const valid = await verifyHubSignature(deviceId, timestamp, signature);
+    if (!valid) {
+        auditLog('hub_auth_failed', deviceId);
+        return sendError(res, 401, 'Invalid signature');
+    }
+    
+    req.deviceId = deviceId;
+    next();
+};
+
 // Check auth cookie
-app.get('/api/auth/check', async (req, res) => {
-    const { id } = req.query;
-    const cookie = req.cookies[`auth_${id}`];
+app.get('/api/auth/check', validateDeviceId('query'), async (req, res) => {
+    const cookie = req.cookies[`auth_${req.deviceId}`];
     if (!cookie) return res.json({ authenticated: false });
     
     try {
         const { device_id, token } = JSON.parse(cookie);
-        if (device_id !== id) return res.json({ authenticated: false });
+        if (device_id !== req.deviceId) return res.json({ authenticated: false });
         
         const result = await pool.query(
             'SELECT auth_cookie_token_hash FROM authentication WHERE device_id = $1',
-            [id]
+            [req.deviceId]
         );
         if (result.rows.length === 0) return res.json({ authenticated: false });
         
-        const valid = result.rows[0].auth_cookie_token_hash === hash(token);
-        res.json({ authenticated: valid });
-    } catch {
+        res.json({ authenticated: result.rows[0].auth_cookie_token_hash === hash(token) });
+    } catch (err) {
+        auditLog('auth_check_error', req.deviceId, { error: err.message });
         res.json({ authenticated: false });
     }
 });
@@ -53,8 +161,8 @@ app.get('/api/auth/check', async (req, res) => {
 // Start auth flow
 app.post('/api/auth/start', async (req, res) => {
     const { deviceId } = req.body;
-    if (!deviceId || !/^[a-z0-9]{32}$/.test(deviceId)) {
-        return res.status(400).json({ error: 'Invalid device ID' });
+    if (!isValidDeviceId(deviceId)) {
+        return sendError(res, 400, 'Invalid device ID');
     }
     
     const nonce = randomHex(16);
@@ -62,82 +170,96 @@ app.post('/api/auth/start', async (req, res) => {
     const expires = Date.now() + 60000;
     
     try {
-        await pool.query(
+        const result = await pool.query(
             `UPDATE authentication SET auth_nonce = $1, auth_expires = $2, client_id = $3
-             WHERE device_id = $4`,
+             WHERE device_id = $4 RETURNING device_id`,
             [nonce, expires, clientId, deviceId]
         );
-        res.json({ clientId });
+        if (result.rows.length === 0) {
+            return sendError(res, 404, 'Device not found');
+        }
+        auditLog('auth_started', deviceId);
+        res.json({ success: true, clientId });
     } catch (err) {
-        res.status(500).json({ error: 'Database error' });
+        auditLog('auth_start_error', deviceId, { error: err.message });
+        sendError(res, 500, 'Database error');
     }
 });
 
 // Poll auth status
-app.get('/api/auth/poll', async (req, res) => {
-    const { id, clientId } = req.query;
+app.get('/api/auth/poll', validateDeviceId('query'), async (req, res) => {
+    const { clientId } = req.query;
+    const client = await pool.connect();
     
     try {
-        const result = await pool.query(
-            'SELECT auth_nonce, auth_expires, client_id FROM authentication WHERE device_id = $1',
-            [id]
+        await client.query('BEGIN');
+        
+        const result = await client.query(
+            'SELECT auth_nonce, auth_expires, client_id FROM authentication WHERE device_id = $1 FOR UPDATE',
+            [req.deviceId]
         );
         if (result.rows.length === 0) {
-            return res.json({ status: 'error', message: 'Device not found' });
+            await client.query('ROLLBACK');
+            return res.json({ success: false, status: 'error', message: 'Device not found' });
         }
         
         const row = result.rows[0];
         if (row.client_id !== clientId) {
-            return res.json({ status: 'error', message: 'Invalid client' });
+            await client.query('ROLLBACK');
+            return res.json({ success: false, status: 'error', message: 'Invalid client' });
         }
         
         if (Date.now() > row.auth_expires) {
-            return res.json({ status: 'timeout', message: 'Authentication expired' });
+            await client.query('ROLLBACK');
+            return res.json({ success: false, status: 'timeout', message: 'Authentication expired' });
         }
         
-        // Hub confirmed if nonce is cleared but still within auth window
         if (row.auth_nonce === null) {
-            // Generate cookie token for this client
             const token = randomHex(32);
-            await pool.query(
+            await client.query(
                 'UPDATE authentication SET auth_cookie_token_hash = $1, client_id = NULL WHERE device_id = $2',
-                [hash(token), id]
+                [hash(token), req.deviceId]
             );
+            await client.query('COMMIT');
             
-            res.cookie(`auth_${id}`, JSON.stringify({ device_id: id, token }), {
+            res.cookie(`auth_${req.deviceId}`, JSON.stringify({ device_id: req.deviceId, token }), {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',
                 maxAge: 365 * 24 * 60 * 60 * 1000,
                 sameSite: 'strict'
             });
-            return res.json({ status: 'authenticated', message: 'Success' });
+            auditLog('auth_completed', req.deviceId);
+            return res.json({ success: true, status: 'authenticated', message: 'Success' });
         }
         
-        res.json({ status: 'pending', message: 'Waiting for hub...' });
+        await client.query('COMMIT');
+        res.json({ success: true, status: 'pending', message: 'Waiting for hub...' });
     } catch (err) {
-        console.error('auth/poll error:', err.message);
-        res.status(500).json({ status: 'error', message: 'Server error' });
+        await client.query('ROLLBACK');
+        auditLog('auth_poll_error', req.deviceId, { error: err.message });
+        sendError(res, 500, 'Server error');
+    } finally {
+        client.release();
     }
 });
 
-// Hub: Get nonce for signing
-app.get('/api/hub/nonce', async (req, res) => {
-    const { id } = req.query;
-    
+// Hub: Get nonce for signing (requires hub signature)
+app.get('/api/hub/nonce', requireHubAuth, async (req, res) => {
     try {
         const result = await pool.query(
             'SELECT auth_nonce, auth_expires FROM authentication WHERE device_id = $1',
-            [id]
+            [req.deviceId]
         );
         if (result.rows.length === 0 || !result.rows[0].auth_nonce) {
-            return res.status(404).json({ error: 'No pending auth' });
+            return sendError(res, 404, 'No pending auth');
         }
         if (Date.now() > result.rows[0].auth_expires) {
-            return res.status(410).json({ error: 'Auth expired' });
+            return sendError(res, 410, 'Auth expired');
         }
-        res.json({ nonce: result.rows[0].auth_nonce });
-    } catch {
-        res.status(500).json({ error: 'Server error' });
+        res.json({ success: true, nonce: result.rows[0].auth_nonce });
+    } catch (err) {
+        auditLog('nonce_fetch_error', req.deviceId, { error: err.message });
+        sendError(res, 500, 'Server error');
     }
 });
 
@@ -145,9 +267,9 @@ app.get('/api/hub/nonce', async (req, res) => {
 app.post('/api/hub/auth', async (req, res) => {
     const { deviceId, signature } = req.body;
     
-    console.log('=== AUTH DEBUG ===');
-    console.log('deviceId:', deviceId);
-    console.log('signature length:', signature?.length);
+    if (!isValidDeviceId(deviceId)) {
+        return sendError(res, 400, 'Invalid device ID');
+    }
     
     try {
         const result = await pool.query(
@@ -155,67 +277,63 @@ app.post('/api/hub/auth', async (req, res) => {
             [deviceId]
         );
         if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Device not found' });
+            auditLog('auth_device_not_found', deviceId);
+            return sendError(res, 404, 'Device not found');
         }
         
         const { auth_public_key, auth_nonce, auth_expires } = result.rows[0];
-        const formattedKey = formatPEM(auth_public_key);
-        console.log('nonce:', auth_nonce);
-        console.log('formatted key:\n', formattedKey.substring(0, 100) + '...');
         
         if (!auth_nonce || Date.now() > auth_expires) {
-            return res.status(410).json({ error: 'Auth expired' });
+            auditLog('auth_expired', deviceId);
+            return sendError(res, 410, 'Auth expired');
         }
         
-        // Verify signature: hub signed (nonce + deviceId) with private key
+        const formattedKey = formatPEM(auth_public_key);
         const message = auth_nonce + deviceId;
-        console.log('message to verify:', message);
-        
         const verify = crypto.createVerify('RSA-SHA256');
         verify.update(message);
         
         let valid = false;
-        let verifyError = null;
         try {
             valid = verify.verify(formattedKey, signature, 'base64');
-        } catch (err) {
-            verifyError = err.message;
+        } catch {
             valid = false;
         }
         
-        console.log('valid:', valid);
-        if (verifyError) console.log('verify error:', verifyError);
-        console.log('=== END DEBUG ===');
-        
         if (!valid) {
-            return res.status(401).json({ error: 'Invalid signature' });
+            auditLog('auth_invalid_signature', deviceId);
+            return sendError(res, 401, 'Invalid signature');
         }
         
-        // Mark auth as complete by clearing nonce
         await pool.query(
             'UPDATE authentication SET auth_nonce = NULL WHERE device_id = $1',
             [deviceId]
         );
         
+        auditLog('hub_auth_success', deviceId);
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ error: 'Server error' });
+        auditLog('hub_auth_error', deviceId, { error: err.message });
+        sendError(res, 500, 'Server error');
     }
 });
 
-// Middleware to verify auth for device endpoints
+// Middleware to verify auth cookie for device endpoints
 const requireAuth = async (req, res, next) => {
     const deviceId = req.params.id;
-    const cookie = req.cookies[`auth_${deviceId}`];
+    if (!isValidDeviceId(deviceId)) {
+        return sendError(res, 400, 'Invalid device ID');
+    }
     
+    const cookie = req.cookies[`auth_${deviceId}`];
     if (!cookie) {
-        return res.status(401).json({ error: 'Not authenticated', needsAuth: true });
+        return sendError(res, 401, 'Not authenticated', { needsAuth: true });
     }
     
     try {
         const { device_id, token } = JSON.parse(cookie);
         if (device_id !== deviceId) {
-            return res.status(401).json({ error: 'Invalid auth', needsAuth: true });
+            return sendError(res, 401, 'Invalid auth', { needsAuth: true });
         }
         
         const result = await pool.query(
@@ -223,32 +341,35 @@ const requireAuth = async (req, res, next) => {
             [deviceId]
         );
         if (result.rows.length === 0 || result.rows[0].auth_cookie_token_hash !== hash(token)) {
-            return res.status(401).json({ error: 'Invalid token', needsAuth: true });
+            return sendError(res, 401, 'Invalid token', { needsAuth: true });
         }
         
+        req.deviceId = deviceId;
         next();
-    } catch {
-        res.status(401).json({ error: 'Auth error', needsAuth: true });
+    } catch (err) {
+        auditLog('auth_middleware_error', deviceId, { error: err.message });
+        sendError(res, 401, 'Auth error', { needsAuth: true });
     }
 };
 
-// Get device state
+// Get device state (client auth via cookie)
 app.get('/api/device/:id', requireAuth, async (req, res) => {
     try {
         const result = await pool.query(
             'SELECT current_temp, set_temp, mode, boost, program FROM devices WHERE device_id = $1',
-            [req.params.id]
+            [req.deviceId]
         );
         if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Device not found' });
+            return sendError(res, 404, 'Device not found');
         }
-        res.json(result.rows[0]);
-    } catch {
-        res.status(500).json({ error: 'Server error' });
+        res.json({ success: true, ...result.rows[0] });
+    } catch (err) {
+        auditLog('device_get_error', req.deviceId, { error: err.message });
+        sendError(res, 500, 'Server error');
     }
 });
 
-// Update device state
+// Update device state (client auth via cookie)
 app.patch('/api/device/:id', requireAuth, async (req, res) => {
     const { set_temp, mode, boost, program } = req.body;
     const updates = [];
@@ -262,7 +383,7 @@ app.patch('/api/device/:id', requireAuth, async (req, res) => {
     
     if (updates.length === 0) return res.json({ success: true });
     
-    values.push(req.params.id);
+    values.push(req.deviceId);
     
     try {
         await pool.query(
@@ -270,41 +391,45 @@ app.patch('/api/device/:id', requireAuth, async (req, res) => {
             values
         );
         res.json({ success: true });
-    } catch {
-        res.status(500).json({ error: 'Server error' });
+    } catch (err) {
+        auditLog('device_update_error', req.deviceId, { error: err.message });
+        sendError(res, 500, 'Server error');
     }
 });
 
-// Hub: Get settings
-app.get('/api/hub/state', async (req, res) => {
-    const { id } = req.query;
+// Hub: Get settings (requires hub signature)
+app.get('/api/hub/state', requireHubAuth, async (req, res) => {
     try {
         const result = await pool.query(
             'SELECT set_temp, mode, boost, program FROM devices WHERE device_id = $1',
-            [id]
+            [req.deviceId]
         );
         if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Device not found' });
+            return sendError(res, 404, 'Device not found');
         }
-        res.json(result.rows[0]);
-    } catch {
-        res.status(500).json({ error: 'Server error' });
+        res.json({ success: true, ...result.rows[0] });
+    } catch (err) {
+        auditLog('hub_state_error', req.deviceId, { error: err.message });
+        sendError(res, 500, 'Server error');
     }
 });
 
-// Hub: Report temperature
-app.post('/api/hub/temp', async (req, res) => {
-    const { deviceId, temp } = req.body;
+// Hub: Report temperature (requires hub signature)
+app.post('/api/hub/temp', requireHubAuth, async (req, res) => {
+    const { temp } = req.body;
     try {
         await pool.query(
             'UPDATE devices SET current_temp = $1 WHERE device_id = $2',
-            [temp, deviceId]
+            [temp, req.deviceId]
         );
         res.json({ success: true });
-    } catch {
-        res.status(500).json({ error: 'Server error' });
+    } catch (err) {
+        auditLog('hub_temp_error', req.deviceId, { error: err.message });
+        sendError(res, 500, 'Server error');
     }
 });
+
+app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
