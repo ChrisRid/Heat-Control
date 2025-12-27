@@ -63,7 +63,7 @@ app.post('/api/auth/start', async (req, res) => {
     
     try {
         await pool.query(
-            `UPDATE authentication SET auth_nonce = $1, auth_expires = $2, client_id = $3 
+            `UPDATE authentication SET auth_nonce = $1, auth_expires = $2, client_id = $3
              WHERE device_id = $4`,
             [nonce, expires, clientId, deviceId]
         );
@@ -79,7 +79,7 @@ app.get('/api/auth/poll', async (req, res) => {
     
     try {
         const result = await pool.query(
-            'SELECT auth_expires, auth_cookie_token_hash, client_id FROM authentication WHERE device_id = $1',
+            'SELECT auth_nonce, auth_expires, client_id FROM authentication WHERE device_id = $1',
             [id]
         );
         if (result.rows.length === 0) {
@@ -95,11 +95,12 @@ app.get('/api/auth/poll', async (req, res) => {
             return res.json({ status: 'timeout', message: 'Authentication expired' });
         }
         
-        if (row.auth_cookie_token_hash && row.auth_expires > Date.now() - 60000) {
-            // Auth completed - generate cookie token for this client
+        // Hub confirmed if nonce is cleared but still within auth window
+        if (row.auth_nonce === null) {
+            // Generate cookie token for this client
             const token = randomHex(32);
             await pool.query(
-                'UPDATE authentication SET auth_cookie_token_hash = $1, auth_nonce = NULL, client_id = NULL WHERE device_id = $2',
+                'UPDATE authentication SET auth_cookie_token_hash = $1, client_id = NULL WHERE device_id = $2',
                 [hash(token), id]
             );
             
@@ -190,11 +191,10 @@ app.post('/api/hub/auth', async (req, res) => {
             return res.status(401).json({ error: 'Invalid signature' });
         }
         
-        // Mark auth as complete by setting a temporary token hash
-        const tempHash = hash(randomHex(16));
+        // Mark auth as complete by clearing nonce
         await pool.query(
-            'UPDATE authentication SET auth_cookie_token_hash = $1 WHERE device_id = $2',
-            [tempHash, deviceId]
+            'UPDATE authentication SET auth_nonce = NULL WHERE device_id = $1',
+            [deviceId]
         );
         
         res.json({ success: true });
