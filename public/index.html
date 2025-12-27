@@ -132,22 +132,48 @@
 <script>
 const API = '/api';
 const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-const TEMP_MIN = 15, TEMP_MAX = 30;
+const TEMP_MIN = 10, TEMP_MAX = 30;  // #35 - Unified 10-30 range
+const POLL_INTERVAL_MS = 5000;        // #37 - Poll every 5 seconds
+const AUTH_POLL_INTERVAL_MS = 2000;
+const AUTH_TIMEOUT_MS = 62000;
+const log = {
+    error: (context, err) => console.error(`[${context}]`, err?.message || err || 'Unknown error'),
+    warn: (context, msg) => console.warn(`[${context}]`, msg),
+    info: (context, msg) => console.info(`[${context}]`, msg)
+};
 
-// Sanitize and validate device ID from URL
+function createDebouncer(delayMs) {
+    let timer = null;
+    return function(fn) {
+        clearTimeout(timer);
+        timer = setTimeout(fn, delayMs);
+    };
+}
+
+// =============================================================================
+// Device ID Validation
+// =============================================================================
 function getDeviceId() {
     const raw = new URLSearchParams(location.search).get('id') || '';
     const sanitized = raw.replace(/[^a-z0-9]/g, '').substring(0, 32);
     return /^[a-z0-9]{32}$/.test(sanitized) ? sanitized : null;
 }
 
+// =============================================================================
+// Application State
+// =============================================================================
 let deviceId = getDeviceId();
 let state = { cur: null, tar: 21, mode: 0, boost: 0, program: '' };
 let selectedDay = 0;
 let schedule = [[],[],[],[],[],[],[]];
-let pollTimer = null, syncTimer = null, dragging = null;
+let pollTimer = null;
+let dragging = null;
 
-// DOM
+const debouncedSave = createDebouncer(500);
+
+// =============================================================================
+// DOM Elements
+// =============================================================================
 const $ = id => document.getElementById(id);
 const auth = $('auth'), main = $('main'), authIcon = $('authIcon'), authTitle = $('authTitle');
 const authMsg = $('authMsg'), authBtn = $('authBtn'), authErr = $('authErr');
@@ -155,7 +181,9 @@ const status = $('status'), statusTxt = $('statusTxt'), heat = $('heat');
 const cur = $('cur'), tar = $('tar'), sync = $('sync');
 const canvas = $('canvas'), ctx = canvas.getContext('2d');
 
-// Init
+// =============================================================================
+// Initialization
+// =============================================================================
 if (!deviceId) {
     authTitle.textContent = 'Invalid Device';
     authMsg.textContent = 'Scan a valid QR code from your hub.';
@@ -165,12 +193,17 @@ if (!deviceId) {
     checkAuth();
 }
 
+// =============================================================================
+// Authentication Flow
+// =============================================================================
 async function checkAuth() {
     try {
         const res = await fetch(`${API}/auth/check?id=${deviceId}`, { credentials: 'include' });
         const data = await res.json();
         if (data.authenticated) showMain();
-    } catch {}
+    } catch (err) {
+        log.error('checkAuth', err);
+    }
 }
 
 authBtn.onclick = startAuth;
@@ -178,12 +211,19 @@ authBtn.onclick = startAuth;
 async function startAuth() {
     authBtn.disabled = true;
     authErr.classList.add('hidden');
+    
     try {
         const res = await fetch(`${API}/auth/start`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ deviceId })
         });
+        
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || 'Failed to start auth');
+        }
+        
         const { clientId } = await res.json();
         
         authTitle.textContent = 'Waiting...';
@@ -193,7 +233,7 @@ async function startAuth() {
         
         const start = Date.now();
         const poll = setInterval(async () => {
-            if (Date.now() - start > 62000) {
+            if (Date.now() - start > AUTH_TIMEOUT_MS) {
                 clearInterval(poll);
                 resetAuth('Timed out. Try again.');
                 return;
@@ -210,11 +250,17 @@ async function startAuth() {
                 } else if (d.status === 'timeout' || d.status === 'expired') {
                     clearInterval(poll);
                     resetAuth('Timed out. Try again.');
+                } else if (d.status === 'error') {
+                    clearInterval(poll);
+                    resetAuth(d.error || 'Authentication error');
                 }
-            } catch {}
-        }, 2000);
-    } catch (e) {
-        resetAuth(e.message || 'Failed to start');
+            } catch (err) {
+                log.error('authPoll', err);
+            }
+        }, AUTH_POLL_INTERVAL_MS);
+    } catch (err) {
+        log.error('startAuth', err);
+        resetAuth(err.message || 'Failed to start');
     }
 }
 
@@ -224,22 +270,33 @@ function resetAuth(err) {
     authMsg.textContent = 'Press the button below, then press the auth button on your hub within 60 seconds.';
     authBtn.classList.remove('hidden');
     authBtn.disabled = false;
-    if (err) { authErr.textContent = err; authErr.classList.remove('hidden'); }
+    if (err) {
+        authErr.textContent = err;
+        authErr.classList.remove('hidden');
+        log.warn('auth', err);
+    }
 }
 
+// =============================================================================
+// Main Application
+// =============================================================================
 function showMain() {
     auth.classList.add('hidden');
     main.classList.remove('hidden');
     initDays();
     resizeCanvas();
     fetchState();
-    pollTimer = setInterval(fetchState, 30000);
+    // #37 - Poll every 5 seconds
+    pollTimer = setInterval(fetchState, POLL_INTERVAL_MS);
 }
 
 async function fetchState() {
     try {
         const res = await fetch(`${API}/device/${deviceId}`, { credentials: 'include' });
-        if (!res.ok) throw new Error();
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || `HTTP ${res.status}`);
+        }
         const d = await res.json();
         state.cur = d.current_temp;
         state.tar = d.set_temp;
@@ -248,7 +305,8 @@ async function fetchState() {
         decodeProgram(d.program);
         render();
         setStatus('ok', 'Connected');
-    } catch {
+    } catch (err) {
+        log.error('fetchState', err);
         setStatus('err', 'Connection Lost');
     }
 }
@@ -265,8 +323,7 @@ function showSync(ok) {
 }
 
 function save(updates) {
-    clearTimeout(syncTimer);
-    syncTimer = setTimeout(async () => {
+    debouncedSave(async () => {
         try {
             const res = await fetch(`${API}/device/${deviceId}`, {
                 method: 'PATCH',
@@ -274,9 +331,16 @@ function save(updates) {
                 body: JSON.stringify(updates),
                 credentials: 'include'
             });
-            showSync(res.ok);
-        } catch { showSync(false); }
-    }, 500);
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.error || `HTTP ${res.status}`);
+            }
+            showSync(true);
+        } catch (err) {
+            log.error('save', err);
+            showSync(false);
+        }
+    });
 }
 
 function render() {
@@ -296,11 +360,28 @@ function render() {
     if (state.mode === 1) drawTimeline();
 }
 
-// Temperature controls
-$('dec').onclick = () => { if (state.tar > 10) { state.tar--; render(); save({ set_temp: state.tar }); } };
-$('inc').onclick = () => { if (state.tar < 30) { state.tar++; render(); save({ set_temp: state.tar }); } };
+// =============================================================================
+// Temperature Controls
+// =============================================================================
+$('dec').onclick = () => {
+    if (state.tar > TEMP_MIN) {
+        state.tar--;
+        render();
+        save({ set_temp: state.tar });
+    }
+};
 
-// Boost
+$('inc').onclick = () => {
+    if (state.tar < TEMP_MAX) {
+        state.tar++;
+        render();
+        save({ set_temp: state.tar });
+    }
+};
+
+// =============================================================================
+// Boost Controls
+// =============================================================================
 document.querySelectorAll('[data-boost]').forEach(b => {
     b.onclick = () => {
         if (state.mode === 0) return;
@@ -310,11 +391,29 @@ document.querySelectorAll('[data-boost]').forEach(b => {
     };
 });
 
-// Mode
-$('modeManual').onclick = () => { state.mode = 0; state.boost = 0; render(); save({ mode: 0, boost: 0 }); };
-$('modeProgram').onclick = () => { state.mode = 1; render(); save({ mode: 1 }); setTimeout(() => { resizeCanvas(); drawTimeline(); }, 100); };
+// =============================================================================
+// Mode Controls
+// =============================================================================
+$('modeManual').onclick = () => {
+    state.mode = 0;
+    state.boost = 0;
+    render();
+    save({ mode: 0, boost: 0 });
+};
 
-// Days
+$('modeProgram').onclick = () => {
+    state.mode = 1;
+    render();
+    save({ mode: 1 });
+    setTimeout(() => {
+        resizeCanvas();
+        drawTimeline();
+    }, 100);
+};
+
+// =============================================================================
+// Days Selector
+// =============================================================================
 function initDays() {
     const c = $('days');
     DAYS.forEach((d, i) => {
@@ -331,16 +430,18 @@ function initDays() {
     });
 }
 
-// Program encoding: A=10, B=11, etc. 24 chars per day, 7 days = 168 chars
+// =============================================================================
+// #35 - Program Encoding/Decoding (A=10°C to U=30°C)
+// =============================================================================
 function decodeProgram(prog) {
     schedule = [[],[],[],[],[],[],[]];
     if (!prog || prog.length !== 168) return;
     for (let d = 0; d < 7; d++) {
         let lastTemp = null;
         for (let h = 0; h < 24; h++) {
-            const temp = prog.charCodeAt(d * 24 + h) - 65 + 10;
+            const temp = prog.charCodeAt(d * 24 + h) - 65 + TEMP_MIN;
             if (temp !== lastTemp) {
-                schedule[d].push({ hour: h, temp });
+                schedule[d].push({ hour: h, temp: Math.max(TEMP_MIN, Math.min(TEMP_MAX, temp)) });
                 lastTemp = temp;
             }
         }
@@ -358,13 +459,17 @@ function encodeProgram() {
                 curTemp = pts[ptIdx].temp;
                 ptIdx++;
             }
-            prog += String.fromCharCode(curTemp - 10 + 65);
+            // Clamp to valid range and encode
+            const clampedTemp = Math.max(TEMP_MIN, Math.min(TEMP_MAX, curTemp));
+            prog += String.fromCharCode(clampedTemp - TEMP_MIN + 65);
         }
     }
     return prog;
 }
 
-// Canvas
+// =============================================================================
+// Canvas / Timeline
+// =============================================================================
 function resizeCanvas() {
     const w = $('programPanel').offsetWidth - 64;
     const h = 160;
@@ -406,7 +511,8 @@ function drawTimeline() {
     ctx.textAlign = 'center';
     for (let h = 0; h <= 24; h += 2) ctx.fillText(String(h).padStart(2, '0'), hourToX(h), a.b + 11);
     ctx.textAlign = 'right';
-    for (let t = TEMP_MIN; t <= TEMP_MAX; t += 3) ctx.fillText(t + '\u00B0', a.l - 5, tempToY(t) + 3);
+    // Show temperature labels at intervals
+    for (let t = TEMP_MIN; t <= TEMP_MAX; t += 5) ctx.fillText(t + '\u00B0', a.l - 5, tempToY(t) + 3);
     
     // Line
     const pts = (schedule[selectedDay] || []).slice().sort((a, b) => a.hour - b.hour);
@@ -447,6 +553,9 @@ function getPos(e) {
     return { x: t.clientX - r.left, y: t.clientY - r.top };
 }
 
+// =============================================================================
+// Canvas Mouse Events
+// =============================================================================
 canvas.onmousedown = e => {
     const p = getPos(e), a = getArea();
     if (p.x < a.l || p.x > a.r || p.y < a.t || p.y > a.b) return;
@@ -479,7 +588,11 @@ canvas.onmouseup = canvas.onmouseleave = () => {
     if (dragging !== null) { save({ program: encodeProgram() }); dragging = null; canvas.style.cursor = 'crosshair'; }
 };
 
+// =============================================================================
+// Canvas Touch Events
+// =============================================================================
 let longPress = null, longFired = false;
+
 canvas.ontouchstart = e => {
     e.preventDefault();
     const p = getPos(e), a = getArea();
@@ -520,6 +633,9 @@ canvas.ontouchend = () => {
 canvas.oncontextmenu = e => e.preventDefault();
 window.onresize = () => { if (state.mode === 1) { resizeCanvas(); drawTimeline(); } };
 
+// =============================================================================
+// Schedule Buttons
+// =============================================================================
 $('copyPrev').onclick = () => {
     const prev = selectedDay === 0 ? 6 : selectedDay - 1;
     schedule[selectedDay] = schedule[prev].map(p => ({...p}));
