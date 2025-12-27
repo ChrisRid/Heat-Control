@@ -102,6 +102,7 @@ app.get('/api/auth/poll', async (req, res) => {
         
         res.json({ status: 'pending', message: 'Waiting for hub...' });
     } catch (err) {
+        console.error('auth/poll error:', err.message);
         res.status(500).json({ status: 'error', message: 'Server error' });
     }
 });
@@ -131,6 +132,10 @@ app.get('/api/hub/nonce', async (req, res) => {
 app.post('/api/hub/auth', async (req, res) => {
     const { deviceId, signature } = req.body;
     
+    console.log('=== AUTH DEBUG ===');
+    console.log('deviceId:', deviceId);
+    console.log('signature length:', signature?.length);
+    
     try {
         const result = await pool.query(
             'SELECT auth_public_key, auth_nonce, auth_expires FROM authentication WHERE device_id = $1',
@@ -141,21 +146,32 @@ app.post('/api/hub/auth', async (req, res) => {
         }
         
         const { auth_public_key, auth_nonce, auth_expires } = result.rows[0];
+        console.log('nonce:', auth_nonce);
+        console.log('public key starts with:', auth_public_key?.substring(0, 30));
+        
         if (!auth_nonce || Date.now() > auth_expires) {
             return res.status(410).json({ error: 'Auth expired' });
         }
         
         // Verify signature: hub signed (nonce + deviceId) with private key
         const message = auth_nonce + deviceId;
+        console.log('message to verify:', message);
+        
         const verify = crypto.createVerify('RSA-SHA256');
         verify.update(message);
         
         let valid = false;
+        let verifyError = null;
         try {
             valid = verify.verify(auth_public_key, signature, 'base64');
-        } catch {
+        } catch (err) {
+            verifyError = err.message;
             valid = false;
         }
+        
+        console.log('valid:', valid);
+        if (verifyError) console.log('verify error:', verifyError);
+        console.log('=== END DEBUG ===');
         
         if (!valid) {
             return res.status(401).json({ error: 'Invalid signature' });
