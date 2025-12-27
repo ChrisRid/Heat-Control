@@ -11,6 +11,18 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
+// Reformat PEM key (fix spacing/newlines)
+function formatPEM(key) {
+    // Remove all whitespace and headers
+    let b64 = key.replace(/-----BEGIN [^-]+-----/, '')
+                 .replace(/-----END [^-]+-----/, '')
+                 .replace(/\s/g, '');
+    // Re-add headers with proper newlines
+    return '-----BEGIN PUBLIC KEY-----\n' + 
+           b64.match(/.{1,64}/g).join('\n') + 
+           '\n-----END PUBLIC KEY-----';
+}
+
 // Utility functions
 const hash = (str) => crypto.createHash('sha256').update(str).digest('hex');
 const randomHex = (bytes) => crypto.randomBytes(bytes).toString('hex');
@@ -146,8 +158,9 @@ app.post('/api/hub/auth', async (req, res) => {
         }
         
         const { auth_public_key, auth_nonce, auth_expires } = result.rows[0];
+        const formattedKey = formatPEM(auth_public_key);
         console.log('nonce:', auth_nonce);
-        console.log('public key starts with:', auth_public_key?.substring(0, 30));
+        console.log('formatted key:\n', formattedKey.substring(0, 100) + '...');
         
         if (!auth_nonce || Date.now() > auth_expires) {
             return res.status(410).json({ error: 'Auth expired' });
@@ -163,7 +176,7 @@ app.post('/api/hub/auth', async (req, res) => {
         let valid = false;
         let verifyError = null;
         try {
-            valid = verify.verify(auth_public_key, signature, 'base64');
+            valid = verify.verify(formattedKey, signature, 'base64');
         } catch (err) {
             verifyError = err.message;
             valid = false;
