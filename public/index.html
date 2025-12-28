@@ -4,16 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Thermostat</title>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&family=JetBrains+Mono:wght@300;400&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
-            --bg: #08090a; --bg2: #111214; --bg3: #1a1b1e;
+            --bg: #08090a; --bg2: #232323; --bg3: #1a1b1e;
             --border: #2a2b2e; --text: #f5f5f5; --text2: rgba(255,255,255,0.6); --text3: rgba(255,255,255,0.4);
             --accent: #00d4aa; --accent-glow: rgba(0,212,170,0.15);
             --danger: #ff6b6b; --heating: #ff9f43;
+            --blue: #3d8bd4; --blue-glow: rgba(61,139,212,0.20); --blue-border: rgba(61,139,212,0.5);
         }
-        body { font-family: 'DM Sans', sans-serif; background: var(--bg); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 20px; color: var(--text); }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: var(--bg); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 20px; color: var(--text); }
         .hidden { display: none !important; }
         
         /* Auth */
@@ -25,8 +25,10 @@
         .auth-btn:hover { background: var(--accent); color: var(--bg); }
         .auth-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .auth-error { color: var(--danger); font-size: 13px; padding: 12px 20px; background: rgba(255,107,107,0.15); border-radius: 8px; margin-top: 16px; }
-        .spinner { width: 40px; height: 40px; border: 3px solid var(--bg3); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 16px; }
-        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        /* Animated loading emoji */
+        .loading-emoji { font-size: 40px; display: flex; align-items: center; justify-content: center; height: 100%; animation: pulse 1.5s ease-in-out infinite; }
+        @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.1); opacity: 0.7; } }
 
         /* Main */
         .status { position: fixed; top: 16px; right: 16px; display: flex; align-items: center; gap: 8px; padding: 8px 14px; background: var(--bg2); border: 1px solid var(--border); border-radius: 20px; font-size: 11px; color: var(--text3); }
@@ -34,40 +36,43 @@
         .status.err { border-color: var(--danger); color: var(--danger); }
         .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
         
-        .card { background: var(--bg2); border-radius: 24px; padding: 32px 40px; text-align: center; border: 1px solid var(--border); width: min(92vw, 420px); position: relative; }
+        .card { background: var(--bg2); border-radius: 24px; padding: 32px 40px; text-align: center; border: 1px solid var(--border); width: min(94vw, 440px); position: relative; margin-bottom: 12px; }
+        .card:last-of-type { margin-bottom: 0; }
         .heat { position: absolute; top: 20px; right: 24px; font-size: 20px; opacity: 0; transition: opacity 0.3s; }
-        .heat.on { opacity: 1; }
-        .label { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: var(--text3); margin-bottom: 8px; font-weight: 500; }
-        .current { font-size: 72px; font-weight: 200; margin-bottom: 32px; }
-        .current span { font-size: 24px; vertical-align: top; opacity: 0.5; }
-        .target-row { display: flex; align-items: center; justify-content: center; gap: 20px; }
-        .target { font-size: 36px; font-weight: 300; min-width: 100px; font-family: 'JetBrains Mono', monospace; }
-        .target span { font-size: 14px; color: var(--text3); }
-        .btn { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg3); color: var(--text); font-size: 22px; cursor: pointer; transition: all 0.2s; }
-        .btn:hover { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
+        .heat.on { opacity: 1; animation: flicker 0.5s ease-in-out infinite alternate; }
+        @keyframes flicker { 0% { opacity: 0.8; } 100% { opacity: 1; } }
+        .label { font-size: 14px; text-transform: uppercase; letter-spacing: 2px; color: var(--text3); margin-bottom: 8px; font-weight: 500; }
+        .current { font-size: 60px; font-weight: 200; margin-bottom: 30px; color: var(--text); line-height: 1; }
+        .current span:last-child { font-size: 20px; vertical-align: top; opacity: 0.5; }
+        .target-row { display: flex; align-items: center; justify-content: center; gap: 24px; }
+        .target { font-size: 36px; font-weight: 200; min-width: 110px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; line-height: 1; }
+        .target span:last-child { font-size: 14px; color: var(--text3); vertical-align: top; }
+        .btn { width: 50px; height: 50px; border-radius: 50%; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 26px; cursor: pointer; transition: all 0.2s; }
+        .btn:hover { background: var(--blue); color: var(--bg); }
         .btn:active { transform: scale(0.95); }
         
         .section { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--border); }
         .btn-group { display: flex; gap: 8px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
-        .opt { padding: 10px 16px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg3); color: var(--text2); font-size: 11px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
-        .opt:hover { background: var(--bg2); color: var(--text); }
+        .opt { padding: 10px 16px; border-radius: 10px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 11px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+        .opt:hover { background: var(--blue); color: var(--bg); }
         .opt.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
         .opt:disabled { opacity: 0.3; cursor: not-allowed; }
 
         /* Program */
         .program { padding: 24px 32px; }
         .days { display: flex; gap: 4px; margin: 16px 0; flex-wrap: wrap; justify-content: center; }
-        .day { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg3); color: var(--text3); font-size: 10px; font-weight: 500; cursor: pointer; }
-        .day:hover { background: var(--bg2); color: var(--text2); }
+        .day { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 10px; font-weight: 500; cursor: pointer; }
+        .day:hover { background: var(--blue); color: var(--bg); }
         .day.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
         .timeline { position: relative; height: 160px; background: var(--bg); border-radius: 12px; overflow: hidden; }
         .timeline canvas { display: block; cursor: crosshair; }
         .timeline-help { font-size: 10px; color: var(--text3); margin-top: 8px; }
         .sched-btns { display: flex; gap: 6px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
-        .sched-btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg3); color: var(--text3); font-size: 9px; cursor: pointer; }
-        .sched-btn:hover { background: var(--bg2); color: var(--text2); }
-        .sched-btn.danger { border-color: rgba(255,107,107,0.3); color: var(--danger); }
-        .sched-btn.danger:hover { background: rgba(255,107,107,0.15); }
+        .sched-btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 9px; cursor: pointer; }
+        .sched-btn:hover { background: var(--blue); color: var(--bg); }
+        .sched-btn.danger { border-color: rgba(255,107,107,0.3); color: var(--danger); background: rgba(255,107,107,0.1); }
+        .sched-btn.danger:hover { background: rgba(255,107,107,0.25); }
+        .clear-day-row { display: flex; justify-content: center; margin-top: 8px; }
         
         .sync { position: fixed; bottom: 20px; right: 20px; padding: 8px 14px; background: var(--bg2); border: 1px solid var(--border); border-radius: 20px; font-size: 11px; color: var(--text3); opacity: 0; transition: all 0.3s; }
         .sync.show { opacity: 1; }
@@ -109,10 +114,10 @@
         <div class="card program hidden" id="programPanel">
             <div class="label">Boost</div>
             <div class="btn-group">
-                <button class="opt active" data-boost="0">Off</button>
-                <button class="opt" data-boost="1">+1 Hr</button>
-                <button class="opt" data-boost="2">+2 Hr</button>
-                <button class="opt" data-boost="3">+3 Hr</button>
+                <button class="opt active" data-boost="0">Boost<br>Off</button>
+                <button class="opt" data-boost="1">Boost<br>+1 Hr</button>
+                <button class="opt" data-boost="2">Boost<br>+2 Hrs</button>
+                <button class="opt" data-boost="3">Boost<br>+3 Hrs</button>
             </div>
             <div id="schedEditor">
                 <div class="label" style="margin-top:16px">Weekly Schedule</div>
@@ -120,8 +125,10 @@
                 <div class="timeline"><canvas id="canvas"></canvas></div>
                 <div class="timeline-help">Tap to add &bull; Drag to move &bull; Long-press to delete</div>
                 <div class="sched-btns">
-                    <button class="sched-btn" id="copyPrev">&larr; Copy Prev</button>
-                    <button class="sched-btn" id="copyNext">Copy Next &rarr;</button>
+                    <button class="sched-btn" id="copyPrev">&larr; Copy Previous Day</button>
+                    <button class="sched-btn" id="copyNext">Copy Next Day &rarr;</button>
+                </div>
+                <div class="clear-day-row">
                     <button class="sched-btn danger" id="clearDay">Clear Day</button>
                 </div>
             </div>
@@ -230,7 +237,7 @@ async function startAuth() {
         authTitle.textContent = 'Waiting...';
         authMsg.textContent = 'Press the auth button on your hub now.';
         authBtn.classList.add('hidden');
-        authIcon.innerHTML = '<div class="spinner"></div>';
+        authIcon.innerHTML = '<div class="loading-emoji">⏳</div>';
         
         const start = Date.now();
         const poll = setInterval(async () => {
@@ -508,7 +515,7 @@ function drawTimeline() {
     
     // Labels
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.font = '8px ui-monospace, Menlo, Consolas, monospace';
     ctx.textAlign = 'center';
     for (let h = 0; h <= 24; h += 2) ctx.fillText(String(h).padStart(2, '0'), hourToX(h), a.b + 11);
     ctx.textAlign = 'right';
@@ -518,7 +525,7 @@ function drawTimeline() {
     // Line
     const pts = (schedule[selectedDay] || []).slice().sort((a, b) => a.hour - b.hour);
     if (pts.length > 0) {
-        ctx.strokeStyle = '#4facfe';
+        ctx.strokeStyle = '#3d8bd4';
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(hourToX(0), tempToY(pts[0].temp));
@@ -532,9 +539,9 @@ function drawTimeline() {
         // Points
         pts.forEach(p => {
             const x = hourToX(p.hour), y = tempToY(p.temp);
-            ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fillStyle = 'rgba(79,172,254,0.2)'; ctx.fill();
-            ctx.strokeStyle = '#4facfe'; ctx.lineWidth = 2; ctx.stroke();
-            ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fillStyle = '#00f2fe'; ctx.fill();
+            ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fillStyle = 'rgba(61,139,212,0.2)'; ctx.fill();
+            ctx.strokeStyle = '#3d8bd4'; ctx.lineWidth = 2; ctx.stroke();
+            ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fillStyle = '#5ba8e8'; ctx.fill();
         });
     }
 }
