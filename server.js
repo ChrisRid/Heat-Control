@@ -5,12 +5,12 @@ const os = require('os');
 // Clustering - Use all available CPU cores
 // =============================================================================
 
-// Use WEB_CONCURRENCY env var (standard convention), fallback to CPU count
+// Use NUM_CLUSTER_WORKERS env var, fallback to CPU count
 // Note: os.cpus().length returns HOST CPUs in containers, not allocated vCPUs
-const numCPUs = parseInt(process.env.WEB_CONCURRENCY, 10) || os.cpus().length;
+const numCPUs = parseInt(process.env.NUM_CLUSTER_WORKERS, 10) || os.cpus().length;
 
 if (cluster.isPrimary) {
-    console.log(`[Primary ${process.pid}] Starting ${numCPUs} workers (set WEB_CONCURRENCY to override)`);
+    console.log(`[Primary ${process.pid}] Starting ${numCPUs} workers (set NUM_CLUSTER_WORKERS to override)`);
     
     let activeWorkers = 0;
     
@@ -66,10 +66,14 @@ app.use((req, res, next) => {
     next();
 });
 
-// PostgreSQL pool - max connections per worker (total = max × numCPUs)
+// PostgreSQL pool - configurable per worker
+// Total connections = DB_CONNECTIONS_PER_WORKER × WEB_CONCURRENCY (e.g., 3 × 8 = 24)
+// Check your Railway Postgres tier's connection limit
 const pool = new Pool({ 
     connectionString: process.env.DATABASE_URL,
-    max: 10  // 10 per worker = 80 total with 8 workers
+    max: parseInt(process.env.DB_CONNECTIONS_PER_WORKER, 10) || 5,
+    idleTimeoutMillis: 30000,  // Close idle connections after 30s
+    connectionTimeoutMillis: 5000  // Fail fast if can't connect in 5s
 });
 
 // #5 - Validation constants
