@@ -18,13 +18,16 @@
         
         /* Auth */
         .auth { text-align: center; }
-        .auth-icon { width: 80px; height: 80px; border-radius: 50%; background: var(--accent-glow); border: 2px solid var(--accent); display: flex; align-items: center; justify-content: center; font-size: 36px; margin: 0 auto 24px; }
+        .auth-icon { width: 80px; height: 80px; border-radius: 50%; background: var(--blue-glow); border: 2px solid var(--blue); display: flex; align-items: center; justify-content: center; font-size: 36px; margin: 0 auto 24px; }
         .auth h1 { font-size: 24px; font-weight: 300; margin-bottom: 12px; }
         .auth p { font-size: 14px; color: var(--text2); max-width: 280px; margin: 0 auto 24px; }
-        .auth-btn { padding: 14px 32px; border-radius: 12px; border: 1px solid var(--accent); background: var(--accent-glow); color: var(--accent); font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
-        .auth-btn:hover { background: var(--accent); color: var(--bg); }
+        .auth-btn { padding: 14px 32px; border-radius: 12px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+        .auth-btn:hover { background: var(--blue); color: var(--bg); }
         .auth-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .auth-error { color: var(--danger); font-size: 13px; padding: 12px 20px; background: rgba(255,107,107,0.15); border-radius: 8px; margin-top: 16px; }
+        
+        /* Invalid device state - red styling */
+        .auth.invalid .auth-icon { background: rgba(255,107,107,0.1); border-color: var(--danger); }
         
         /* Animated loading emoji */
         .loading-emoji { font-size: 40px; display: flex; align-items: center; justify-content: center; height: 100%; animation: pulse 1.5s ease-in-out infinite; }
@@ -196,6 +199,7 @@ if (!deviceId) {
     authMsg.textContent = 'Scan a valid QR code from your hub.';
     authBtn.classList.add('hidden');
     authIcon.innerHTML = '&#x26A0;';
+    auth.classList.add('invalid');
 } else {
     checkAuth();
 }
