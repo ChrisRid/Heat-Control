@@ -14,7 +14,7 @@
             --danger: #ff6b6b; --heating: #ff9f43;
             --blue: #3d8bd4; --blue-glow: rgba(61,139,212,0.15); --blue-border: rgba(61,139,212,0.5);
         }
-        body { font-family: 'DM Sans', sans-serif; background: var(--bg); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 20px; color: var(--text); }
+        body { font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 20px; color: var(--text); }
         .hidden { display: none !important; }
         
         /* Auth */
@@ -37,15 +37,16 @@
         .status.err { border-color: var(--danger); color: var(--danger); }
         .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
         
-        .card { background: var(--bg2); border-radius: 24px; padding: 32px 40px; text-align: center; border: 1px solid var(--border); width: min(94vw, 440px); position: relative; }
+        .card { background: var(--bg2); border-radius: 24px; padding: 32px 40px; text-align: center; border: 1px solid var(--border); width: min(94vw, 440px); position: relative; margin-bottom: 12px; }
+        .card:last-of-type { margin-bottom: 0; }
         .heat { position: absolute; top: 20px; right: 24px; font-size: 20px; opacity: 0; transition: opacity 0.3s; }
         .heat.on { opacity: 1; animation: flicker 0.5s ease-in-out infinite alternate; }
         @keyframes flicker { 0% { opacity: 0.8; } 100% { opacity: 1; } }
         .label { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: var(--text3); margin-bottom: 8px; font-weight: 500; }
-        .current { font-size: 84px; font-weight: 200; margin-bottom: 32px; color: var(--text); }
+        .current { font-size: 84px; font-weight: 400; margin-bottom: 32px; color: var(--text); line-height: 1; }
         .current span { font-size: 28px; vertical-align: top; opacity: 0.5; }
         .target-row { display: flex; align-items: center; justify-content: center; gap: 24px; }
-        .target { font-size: 42px; font-weight: 300; min-width: 110px; font-family: 'JetBrains Mono', monospace; }
+        .target { font-size: 42px; font-weight: 400; min-width: 110px; font-family: 'JetBrains Mono', 'SF Mono', 'Consolas', monospace; line-height: 1; }
         .target span { font-size: 16px; color: var(--text3); }
         .btn { width: 56px; height: 56px; border-radius: 50%; border: 1px solid var(--blue-border); background: var(--blue-glow); color: var(--blue); font-size: 26px; cursor: pointer; transition: all 0.2s; }
         .btn:hover { background: var(--blue); color: var(--bg); }
