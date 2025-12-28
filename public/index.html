@@ -325,7 +325,7 @@ function render() {
     $('modeProgram').classList.toggle('active', state.mode === 1);
     $('programPanel').classList.toggle('hidden', state.mode === 0);
     
-    if (state.mode === 1) {
+    if (state.mode === 1 && dragging === null) {
         requestAnimationFrame(() => { resizeCanvas(); drawTimeline(); });
     }
 }
@@ -434,7 +434,7 @@ function drawTimeline() {
     ctx.textAlign = 'center';
     for (let hr = 0; hr <= 24; hr += 2) ctx.fillText(hr, hourToX(hr), a.b + h * 0.06);
     ctx.textAlign = 'right';
-    for (let t = TEMP_MIN; t <= TEMP_MAX; t += 5) ctx.fillText(t + '\u00B0', a.l - 4, tempToY(t) + 3);
+    for (let t = TEMP_MIN; t <= TEMP_MAX; t += 2) ctx.fillText(t + '\u00B0', a.l - 4, tempToY(t) + 3);
     
     const pts = (schedule[selectedDay] || []).slice().sort((a, b) => a.hour - b.hour);
     if (pts.length > 0) {
@@ -490,18 +490,19 @@ canvas.onmousedown = e => {
     const i = findPoint(p.x, p.y);
     if (e.button === 2 && i !== -1) {
         schedule[selectedDay].splice(i, 1);
+        dragging = null;
         drawTimeline();
         save({ program: encodeProgram() });
     } else if (e.button === 0) {
         if (i !== -1) {
             dragging = i;
-            canvas.style.cursor = 'grabbing';
-            pendingChanges.program = true;
         } else {
+            dragging = schedule[selectedDay].length;
             schedule[selectedDay].push({ hour: Math.round(xToHour(p.x)), temp: Math.round(yToTemp(p.y)) });
-            drawTimeline();
-            save({ program: encodeProgram() });
         }
+        canvas.style.cursor = 'grabbing';
+        pendingChanges.program = true;
+        drawTimeline();
     }
 };
 
@@ -515,7 +516,17 @@ canvas.onmousemove = e => {
     }
 };
 
-canvas.onmouseup = canvas.onmouseleave = () => {
+canvas.onmouseup = () => {
+    if (dragging !== null) {
+        const prog = encodeProgram();
+        dragging = null;
+        canvas.style.cursor = 'crosshair';
+        drawTimeline();
+        save({ program: prog });
+    }
+};
+
+canvas.onmouseleave = () => {
     if (dragging !== null) {
         const prog = encodeProgram();
         dragging = null;
