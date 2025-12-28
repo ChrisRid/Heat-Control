@@ -7,8 +7,8 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
-            --bg: #08090a; --bg2: #232323; --bg3: #1a1b1e;
-            --border: #2a2b2e; --text: #f5f5f5; --text2: rgba(255,255,255,0.6); --text3: rgba(255,255,255,0.4);
+            --bg: #08090a; --bg2: #1e1e1e; --bg3: #1a1b1e;
+            --border: #2a2b2e; --text: #f5f5f5; --text2: rgba(255,255,255,0.6); --text3: rgba(255,255,255,0.6);
             --accent: #00d4aa; --accent-glow: rgba(0,212,170,0.15);
             --danger: #ff6b6b; --heating: #ff9f43;
             --blue: #3d8bd4; --blue-glow: rgba(61,139,212,0.20); --blue-border: rgba(61,139,212,0.5);
@@ -51,7 +51,7 @@
         .btn:hover { background: var(--blue); color: var(--bg); }
         .btn:active { transform: scale(0.95); }
         
-        .section { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--border); }
+        .section { margin-top: 28px; padding-top: 5px; }
         .btn-group { display: flex; gap: 8px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
         .opt { padding: 10px 16px; border-radius: 10px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 11px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
         .opt:hover { background: var(--blue); color: var(--bg); }
@@ -103,7 +103,6 @@
                 <button class="btn" id="inc">+</button>
             </div>
             <div class="section">
-                <div class="label">Mode</div>
                 <div class="btn-group">
                     <button class="opt active" id="modeManual">Manual</button>
                     <button class="opt" id="modeProgram">Program</button>
@@ -120,7 +119,7 @@
                 <button class="opt" data-boost="3">Boost<br>+3 Hrs</button>
             </div>
             <div id="schedEditor">
-                <div class="label" style="margin-top:16px">Weekly Schedule</div>
+                <div class="label" style="margin-top:16px">Weekly Program</div>
                 <div class="days" id="days"></div>
                 <div class="timeline"><canvas id="canvas"></canvas></div>
                 <div class="timeline-help">Tap to add &bull; Drag to move &bull; Long-press to delete</div>
