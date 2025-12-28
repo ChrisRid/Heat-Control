@@ -362,6 +362,16 @@ function initDays() {
     });
 }
 
+function cleanupSchedule(day) {
+    const pts = schedule[day].slice().sort((a, b) => a.hour - b.hour);
+    if (pts.length <= 1) { schedule[day] = pts; return; }
+    const cleaned = [pts[0]];
+    for (let i = 1; i < pts.length; i++) {
+        if (pts[i].temp !== cleaned[cleaned.length - 1].temp) cleaned.push(pts[i]);
+    }
+    schedule[day] = cleaned;
+}
+
 function decodeProgram(prog) {
     schedule = [[],[],[],[],[],[],[]];
     if (!prog || prog.length !== 168) return;
@@ -518,21 +528,21 @@ canvas.onmousemove = e => {
 
 canvas.onmouseup = () => {
     if (dragging !== null) {
-        const prog = encodeProgram();
         dragging = null;
         canvas.style.cursor = 'crosshair';
+        cleanupSchedule(selectedDay);
         drawTimeline();
-        save({ program: prog });
+        save({ program: encodeProgram() });
     }
 };
 
 canvas.onmouseleave = () => {
     if (dragging !== null) {
-        const prog = encodeProgram();
         dragging = null;
         canvas.style.cursor = 'crosshair';
+        cleanupSchedule(selectedDay);
         drawTimeline();
-        save({ program: prog });
+        save({ program: encodeProgram() });
     }
 };
 
@@ -574,10 +584,10 @@ canvas.ontouchmove = e => {
 canvas.ontouchend = () => {
     if (longPress) { clearTimeout(longPress); longPress = null; }
     if (dragging !== null) {
-        const prog = encodeProgram();
         dragging = null;
+        cleanupSchedule(selectedDay);
         drawTimeline();
-        save({ program: prog });
+        save({ program: encodeProgram() });
     }
 };
 
