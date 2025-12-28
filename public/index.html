@@ -47,13 +47,13 @@
         .target-row { display: flex; align-items: center; justify-content: center; gap: 24px; }
         .target { font-size: 36px; font-weight: 200; min-width: 110px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; line-height: 1; }
         .target span:last-child { font-size: 14px; color: var(--text3); vertical-align: top; }
-        .btn { width: 50px; height: 50px; border-radius: 50%; border: 1px solid var(--blue-border); background: var(--blue-glow); color: var(--blue); font-size: 26px; cursor: pointer; transition: all 0.2s; }
+        .btn { width: 50px; height: 50px; border-radius: 50%; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 26px; cursor: pointer; transition: all 0.2s; }
         .btn:hover { background: var(--blue); color: var(--bg); }
         .btn:active { transform: scale(0.95); }
         
         .section { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--border); }
         .btn-group { display: flex; gap: 8px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
-        .opt { padding: 10px 16px; border-radius: 10px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: var(--blue); font-size: 11px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+        .opt { padding: 10px 16px; border-radius: 10px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 11px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
         .opt:hover { background: var(--blue); color: var(--bg); }
         .opt.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
         .opt:disabled { opacity: 0.3; cursor: not-allowed; }
@@ -61,14 +61,14 @@
         /* Program */
         .program { padding: 24px 32px; }
         .days { display: flex; gap: 4px; margin: 16px 0; flex-wrap: wrap; justify-content: center; }
-        .day { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: var(--blue); font-size: 10px; font-weight: 500; cursor: pointer; }
+        .day { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 10px; font-weight: 500; cursor: pointer; }
         .day:hover { background: var(--blue); color: var(--bg); }
         .day.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
         .timeline { position: relative; height: 160px; background: var(--bg); border-radius: 12px; overflow: hidden; }
         .timeline canvas { display: block; cursor: crosshair; }
         .timeline-help { font-size: 10px; color: var(--text3); margin-top: 8px; }
         .sched-btns { display: flex; gap: 6px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
-        .sched-btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: var(--blue); font-size: 9px; cursor: pointer; }
+        .sched-btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 9px; cursor: pointer; }
         .sched-btn:hover { background: var(--blue); color: var(--bg); }
         .sched-btn.danger { border-color: rgba(255,107,107,0.3); color: var(--danger); background: rgba(255,107,107,0.1); }
         .sched-btn.danger:hover { background: rgba(255,107,107,0.25); }
@@ -106,9 +106,9 @@
                 <div class="label">Boost</div>
                 <div class="btn-group">
                     <button class="opt active" data-boost="0">Boost<br>Off</button>
-                    <button class="opt" data-boost="1">+1 Hr</button>
-                    <button class="opt" data-boost="2">+2 Hr</button>
-                    <button class="opt" data-boost="3">+3 Hr</button>
+                    <button class="opt" data-boost="1">Boost<br>+1 Hour</button>
+                    <button class="opt" data-boost="2">Boost<br>+2 Hour</button>
+                    <button class="opt" data-boost="3">Boost<br>+3 Hour</button>
                 </div>
             </div>
         </div>
