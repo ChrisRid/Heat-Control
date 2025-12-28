@@ -12,7 +12,24 @@
             --accent: #00d4aa; --accent-glow: rgba(0,212,170,0.15);
             --danger: #ff6b6b;
             --blue: #3d8bd4; --blue-glow: rgba(61,139,212,0.20); --blue-border: rgba(61,139,212,0.5);
+            --timeline-bg: #08090a; --timeline-grid: rgba(255,255,255,0.05); --timeline-text: #ffffff;
         }
+        .light-mode {
+            --bg: #f0f2f5; --bg2: #ffffff; --bg3: #f8f9fa;
+            --border: #e0e0e0; --text: #1a1a1a; --text2: rgba(0,0,0,0.55); --text3: rgba(0,0,0,0.75);
+            --accent: #00a88a; --accent-glow: rgba(0,168,138,0.15);
+            --danger: #e53e3e;
+            --blue: #2563eb; --blue-glow: rgba(37,99,235,0.12); --blue-border: rgba(37,99,235,0.4);
+            --timeline-bg: #f8f9fa; --timeline-grid: rgba(0,0,0,0.08); --timeline-text: #1a1a1a;
+        }
+        .light-mode .opt { color: #1e40af; }
+        .light-mode .opt.active { color: var(--accent); }
+        .light-mode .btn { color: #1e40af; }
+        .light-mode .day { color: #1e40af; }
+        .light-mode .day.active { color: var(--accent); }
+        .light-mode .sched-btn { color: #1e40af; }
+        .light-mode .sched-btn.danger { color: var(--danger); }
+        .light-mode .auth-btn { color: #1e40af; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: var(--bg); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 20px; color: var(--text); }
         .hidden { display: none !important; }
         
@@ -29,6 +46,9 @@
 
         .card { background: var(--bg2); border-radius: 24px; padding: 32px 40px; text-align: center; border: 1px solid var(--border); width: min(94vw, 440px); position: relative; margin-bottom: 12px; }
         .card:last-of-type { margin-bottom: 0; }
+        .theme-toggle { position: absolute; top: 20px; left: 24px; width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--blue-border); background: var(--blue-glow); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: all 0.2s; }
+        .theme-toggle:hover { transform: scale(1.1); }
+        .theme-toggle:active { transform: scale(0.95); }
         .heat { position: absolute; top: 20px; right: 24px; font-size: 20px; opacity: 0; transition: opacity 0.3s; }
         .heat.on { opacity: 1; animation: flicker 0.5s ease-in-out infinite alternate; }
         @keyframes flicker { 0% { opacity: 0.8; } 100% { opacity: 1; } }
@@ -51,7 +71,7 @@
         .days { display: flex; gap: 4px; margin: 16px 0; flex-wrap: wrap; justify-content: center; }
         .day { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 10px; font-weight: 500; cursor: pointer; }
         .day.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
-        .timeline { position: relative; height: 240px; background: var(--bg); border-radius: 12px; overflow: hidden; }
+        .timeline { position: relative; height: 240px; background: var(--timeline-bg); border-radius: 12px; overflow: hidden; }
         .timeline canvas { display: block; cursor: crosshair; width: 100%; height: 100%; }
         .timeline-help { font-size: 12px; color: var(--text3); margin-top: 8px; }
         .sched-btns { display: flex; gap: 6px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
@@ -75,6 +95,7 @@
 
     <div class="hidden" id="main">
         <div class="card">
+            <button class="theme-toggle" id="themeToggle" title="Toggle light/dark mode">&#x1F319;</button>
             <div class="heat" id="heat">&#x1F525;</div>
             <div class="label">Current Temperature</div>
             <div class="current"><span id="cur">--</span><span>&deg;C</span></div>
@@ -126,6 +147,48 @@ const POLL_INTERVAL_MS = 5000;
 const AUTH_POLL_INTERVAL_MS = 1000;
 const AUTH_TIMEOUT_MS = 61000;
 
+// Theme management
+function getCookie(name) {
+    const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+    return match ? match[2] : null;
+}
+
+function setCookie(name, value, days = 365) {
+    const expires = new Date(Date.now() + days * 864e5).toUTCString();
+    document.cookie = name + '=' + value + '; expires=' + expires + '; path=/; SameSite=Strict';
+}
+
+function initTheme() {
+    const savedTheme = getCookie('theme');
+    const isLight = savedTheme === 'light';
+    if (isLight) {
+        document.body.classList.add('light-mode');
+    }
+    updateThemeIcon();
+}
+
+function toggleTheme() {
+    const isLight = document.body.classList.toggle('light-mode');
+    setCookie('theme', isLight ? 'light' : 'dark');
+    updateThemeIcon();
+    // Redraw timeline if visible (uses theme colors)
+    if (state.mode === 1) {
+        drawTimeline();
+    }
+}
+
+function updateThemeIcon() {
+    const toggle = document.getElementById('themeToggle');
+    if (toggle) {
+        const isLight = document.body.classList.contains('light-mode');
+        toggle.innerHTML = isLight ? '&#x2600;' : '&#x1F319;'; // Sun or Moon
+        toggle.title = isLight ? 'Switch to dark mode' : 'Switch to light mode';
+    }
+}
+
+// Initialize theme immediately (before DOM fully loads to prevent flash)
+initTheme();
+
 function createDebouncer(delayMs) {
     let timer = null;
     return fn => { clearTimeout(timer); timer = setTimeout(fn, delayMs); };
@@ -152,6 +215,14 @@ const auth = $('auth'), main = $('main'), authIcon = $('authIcon'), authTitle = 
 const authMsg = $('authMsg'), authBtn = $('authBtn'), authErr = $('authErr');
 const heat = $('heat'), cur = $('cur'), tar = $('tar'), sync = $('sync');
 const canvas = $('canvas'), ctx = canvas.getContext('2d');
+
+// Theme toggle event listener
+document.addEventListener('DOMContentLoaded', () => {
+    const themeToggle = $('themeToggle');
+    if (themeToggle) {
+        themeToggle.onclick = toggleTheme;
+    }
+});
 
 if (!deviceId) {
     authTitle.textContent = 'Invalid Device';
@@ -426,6 +497,10 @@ function tempToY(t) { const a = getArea(); return a.b - ((t - TEMP_MIN) / (TEMP_
 function xToHour(x) { const a = getArea(); return Math.max(0, Math.min(24, ((x - a.l) / (a.r - a.l)) * 24)); }
 function yToTemp(y) { const a = getArea(); return Math.max(TEMP_MIN, Math.min(TEMP_MAX, TEMP_MIN + ((a.b - y) / (a.b - a.t)) * (TEMP_MAX - TEMP_MIN))); }
 
+function getComputedColor(varName) {
+    return getComputedStyle(document.body).getPropertyValue(varName).trim();
+}
+
 function drawTimeline() {
     const dpr = devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -434,12 +509,17 @@ function drawTimeline() {
     const a = getArea();
     const h = canvas.offsetHeight;
     
-    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    // Get theme-aware colors
+    const gridColor = getComputedColor('--timeline-grid');
+    const textColor = getComputedColor('--timeline-text');
+    const lineColor = getComputedColor('--blue');
+    
+    ctx.strokeStyle = gridColor;
     ctx.lineWidth = 1;
     for (let hr = 0; hr <= 24; hr++) { ctx.beginPath(); ctx.moveTo(hourToX(hr), a.t); ctx.lineTo(hourToX(hr), a.b); ctx.stroke(); }
     for (let t = TEMP_MIN; t <= TEMP_MAX; t++) { ctx.beginPath(); ctx.moveTo(a.l, tempToY(t)); ctx.lineTo(a.r, tempToY(t)); ctx.stroke(); }
     
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = textColor;
     ctx.font = `bold ${Math.max(9, h * 0.04)}px ui-monospace, Menlo, Consolas, monospace`;
     ctx.textAlign = 'center';
     for (let hr = 0; hr <= 24; hr += 2) ctx.fillText(hr, hourToX(hr), a.b + h * 0.06);
@@ -448,7 +528,7 @@ function drawTimeline() {
     
     const pts = (schedule[selectedDay] || []).slice().sort((a, b) => a.hour - b.hour);
     if (pts.length > 0) {
-        ctx.strokeStyle = '#3d8bd4';
+        ctx.strokeStyle = lineColor;
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(hourToX(0), tempToY(pts[0].temp));
@@ -461,15 +541,15 @@ function drawTimeline() {
         
         pts.forEach(p => {
             const x = hourToX(p.hour), y = tempToY(p.temp);
-            ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fillStyle = 'rgba(61,139,212,0.2)'; ctx.fill();
-            ctx.strokeStyle = '#3d8bd4'; ctx.lineWidth = 2; ctx.stroke();
+            ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fillStyle = getComputedColor('--blue-glow'); ctx.fill();
+            ctx.strokeStyle = lineColor; ctx.lineWidth = 2; ctx.stroke();
             ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fillStyle = '#5ba8e8'; ctx.fill();
         });
         
         if (dragging !== null && schedule[selectedDay][dragging]) {
             const dp = schedule[selectedDay][dragging];
             const dx = hourToX(dp.hour), dy = tempToY(dp.temp);
-            ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+            ctx.strokeStyle = 'rgba(128,128,128,0.4)';
             ctx.lineWidth = 1;
             ctx.setLineDash([4, 4]);
             ctx.beginPath(); ctx.moveTo(dx, a.t); ctx.lineTo(dx, a.b); ctx.stroke();
