@@ -432,7 +432,7 @@ function drawTimeline() {
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.font = `${Math.max(9, h * 0.04)}px ui-monospace, Menlo, Consolas, monospace`;
     ctx.textAlign = 'center';
-    for (let hr = 0; hr <= 24; hr += 2) ctx.fillText(String(hr).padStart(2, '0'), hourToX(hr), a.b + h * 0.06);
+    for (let hr = 0; hr <= 24; hr += 2) ctx.fillText(hr, hourToX(hr), a.b + h * 0.06);
     ctx.textAlign = 'right';
     for (let t = TEMP_MIN; t <= TEMP_MAX; t += 5) ctx.fillText(t + '\u00B0', a.l - 4, tempToY(t) + 3);
     
@@ -455,6 +455,17 @@ function drawTimeline() {
             ctx.strokeStyle = '#3d8bd4'; ctx.lineWidth = 2; ctx.stroke();
             ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fillStyle = '#5ba8e8'; ctx.fill();
         });
+        
+        if (dragging !== null && pts[dragging]) {
+            const dp = pts[dragging];
+            const dx = hourToX(dp.hour), dy = tempToY(dp.temp);
+            ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath(); ctx.moveTo(dx, a.t); ctx.lineTo(dx, a.b); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(a.l, dy); ctx.lineTo(a.r, dy); ctx.stroke();
+            ctx.setLineDash([]);
+        }
     }
 }
 
