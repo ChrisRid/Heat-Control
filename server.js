@@ -5,10 +5,12 @@ const os = require('os');
 // Clustering - Use all available CPU cores
 // =============================================================================
 
-const numCPUs = os.cpus().length;
+// Use WEB_CONCURRENCY env var (standard convention), fallback to CPU count
+// Note: os.cpus().length returns HOST CPUs in containers, not allocated vCPUs
+const numCPUs = parseInt(process.env.WEB_CONCURRENCY, 10) || os.cpus().length;
 
 if (cluster.isPrimary) {
-    console.log(`[Primary ${process.pid}] Starting with ${numCPUs} vCPUs available`);
+    console.log(`[Primary ${process.pid}] Starting ${numCPUs} workers (set WEB_CONCURRENCY to override)`);
     
     let activeWorkers = 0;
     
