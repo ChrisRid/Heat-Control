@@ -247,7 +247,6 @@ function showMain() {
     auth.classList.add('hidden');
     main.classList.remove('hidden');
     initDays();
-    resizeCanvas();
     fetchState();
     pollTimer = setInterval(fetchState, POLL_INTERVAL_MS);
 }
@@ -326,7 +325,9 @@ function render() {
     $('modeProgram').classList.toggle('active', state.mode === 1);
     $('programPanel').classList.toggle('hidden', state.mode === 0);
     
-    if (state.mode === 1) drawTimeline();
+    if (state.mode === 1) {
+        requestAnimationFrame(() => { resizeCanvas(); drawTimeline(); });
+    }
 }
 
 $('dec').onclick = () => {
@@ -343,12 +344,7 @@ document.querySelectorAll('[data-boost]').forEach(b => {
 
 $('modeManual').onclick = () => { state.mode = 0; state.boost = 0; render(); save({ mode: 0, boost: 0 }); };
 
-$('modeProgram').onclick = () => {
-    state.mode = 1;
-    render();
-    save({ mode: 1 });
-    setTimeout(() => { resizeCanvas(); drawTimeline(); }, 100);
-};
+$('modeProgram').onclick = () => { state.mode = 1; render(); save({ mode: 1 }); };
 
 function initDays() {
     const c = $('days');
@@ -397,7 +393,12 @@ function encodeProgram() {
 
 function resizeCanvas() {
     const container = canvas.parentElement;
-    const w = container.offsetWidth, h = container.offsetHeight, dpr = devicePixelRatio || 1;
+    const w = container.offsetWidth, h = container.offsetHeight;
+    if (w === 0 || h === 0) {
+        requestAnimationFrame(resizeCanvas);
+        return;
+    }
+    const dpr = devicePixelRatio || 1;
     canvas.width = w * dpr;
     canvas.height = h * dpr;
     canvas.style.width = w + 'px';
@@ -481,8 +482,11 @@ canvas.onmousedown = e => {
         drawTimeline();
         save({ program: encodeProgram() });
     } else if (e.button === 0) {
-        if (i !== -1) { dragging = i; canvas.style.cursor = 'grabbing'; }
-        else {
+        if (i !== -1) {
+            dragging = i;
+            canvas.style.cursor = 'grabbing';
+            pendingChanges.program = true;
+        } else {
             schedule[selectedDay].push({ hour: Math.round(xToHour(p.x)), temp: Math.round(yToTemp(p.y)) });
             drawTimeline();
             save({ program: encodeProgram() });
@@ -521,6 +525,7 @@ canvas.ontouchstart = e => {
             save({ program: encodeProgram() });
         }, 500);
         dragging = i;
+        pendingChanges.program = true;
     } else {
         schedule[selectedDay].push({ hour: Math.round(xToHour(p.x)), temp: Math.round(yToTemp(p.y)) });
         drawTimeline();
