@@ -46,12 +46,13 @@
         .opt.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
         .opt:disabled { opacity: 0.3; cursor: not-allowed; }
 
-        .program { padding: 24px 32px; }
+        .program { padding: 24px 5px; }
+        .program .label, .program .btn-group, .program .days, .program .timeline-help, .program .sched-btns, .program .clear-day-row { padding-left: 15px; padding-right: 15px; }
         .days { display: flex; gap: 4px; margin: 16px 0; flex-wrap: wrap; justify-content: center; }
         .day { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 10px; font-weight: 500; cursor: pointer; }
         .day.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
-        .timeline { position: relative; height: 160px; background: var(--bg); border-radius: 12px; overflow: hidden; }
-        .timeline canvas { display: block; cursor: crosshair; }
+        .timeline { position: relative; height: 240px; background: var(--bg); border-radius: 12px; overflow: hidden; }
+        .timeline canvas { display: block; cursor: crosshair; width: 100%; height: 100%; }
         .timeline-help { font-size: 10px; color: var(--text3); margin-top: 8px; }
         .sched-btns { display: flex; gap: 6px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
         .sched-btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 9px; cursor: pointer; }
@@ -395,17 +396,18 @@ function encodeProgram() {
 }
 
 function resizeCanvas() {
-    const w = $('programPanel').offsetWidth - 64, h = 160, dpr = devicePixelRatio || 1;
+    const container = canvas.parentElement;
+    const w = container.offsetWidth, h = container.offsetHeight, dpr = devicePixelRatio || 1;
     canvas.width = w * dpr;
     canvas.height = h * dpr;
     canvas.style.width = w + 'px';
     canvas.style.height = h + 'px';
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
 function getArea() {
-    const w = canvas.offsetWidth, h = 160;
-    return { l: w * 0.11, r: w * 0.97, t: h * 0.08, b: h * 0.88 };
+    const w = canvas.offsetWidth, h = canvas.offsetHeight;
+    return { l: w * 0.08, r: w * 0.98, t: h * 0.06, b: h * 0.88 };
 }
 
 function hourToX(h) { const a = getArea(); return a.l + (h / 24) * (a.r - a.l); }
@@ -415,23 +417,23 @@ function yToTemp(y) { const a = getArea(); return Math.max(TEMP_MIN, Math.min(TE
 
 function drawTimeline() {
     const dpr = devicePixelRatio || 1;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.scale(dpr, dpr);
     
     const a = getArea();
+    const h = canvas.offsetHeight;
     
     ctx.strokeStyle = 'rgba(255,255,255,0.05)';
     ctx.lineWidth = 1;
-    for (let h = 0; h <= 24; h++) { ctx.beginPath(); ctx.moveTo(hourToX(h), a.t); ctx.lineTo(hourToX(h), a.b); ctx.stroke(); }
+    for (let hr = 0; hr <= 24; hr++) { ctx.beginPath(); ctx.moveTo(hourToX(hr), a.t); ctx.lineTo(hourToX(hr), a.b); ctx.stroke(); }
     for (let t = TEMP_MIN; t <= TEMP_MAX; t++) { ctx.beginPath(); ctx.moveTo(a.l, tempToY(t)); ctx.lineTo(a.r, tempToY(t)); ctx.stroke(); }
     
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.font = '8px ui-monospace, Menlo, Consolas, monospace';
+    ctx.font = `${Math.max(9, h * 0.04)}px ui-monospace, Menlo, Consolas, monospace`;
     ctx.textAlign = 'center';
-    for (let h = 0; h <= 24; h += 2) ctx.fillText(String(h).padStart(2, '0'), hourToX(h), a.b + 11);
+    for (let hr = 0; hr <= 24; hr += 2) ctx.fillText(String(hr).padStart(2, '0'), hourToX(hr), a.b + h * 0.06);
     ctx.textAlign = 'right';
-    for (let t = TEMP_MIN; t <= TEMP_MAX; t += 5) ctx.fillText(t + '\u00B0', a.l - 5, tempToY(t) + 3);
+    for (let t = TEMP_MIN; t <= TEMP_MAX; t += 5) ctx.fillText(t + '\u00B0', a.l - 4, tempToY(t) + 3);
     
     const pts = (schedule[selectedDay] || []).slice().sort((a, b) => a.hour - b.hour);
     if (pts.length > 0) {
