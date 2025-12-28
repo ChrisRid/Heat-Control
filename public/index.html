@@ -456,8 +456,8 @@ function drawTimeline() {
             ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fillStyle = '#5ba8e8'; ctx.fill();
         });
         
-        if (dragging !== null && pts[dragging]) {
-            const dp = pts[dragging];
+        if (dragging !== null && schedule[selectedDay][dragging]) {
+            const dp = schedule[selectedDay][dragging];
             const dx = hourToX(dp.hour), dy = tempToY(dp.temp);
             ctx.strokeStyle = 'rgba(255,255,255,0.4)';
             ctx.lineWidth = 1;
@@ -516,7 +516,13 @@ canvas.onmousemove = e => {
 };
 
 canvas.onmouseup = canvas.onmouseleave = () => {
-    if (dragging !== null) { save({ program: encodeProgram() }); dragging = null; canvas.style.cursor = 'crosshair'; }
+    if (dragging !== null) {
+        const prog = encodeProgram();
+        dragging = null;
+        canvas.style.cursor = 'crosshair';
+        drawTimeline();
+        save({ program: prog });
+    }
 };
 
 let longPress = null, longFired = false;
@@ -556,7 +562,12 @@ canvas.ontouchmove = e => {
 
 canvas.ontouchend = () => {
     if (longPress) { clearTimeout(longPress); longPress = null; }
-    if (dragging !== null) { save({ program: encodeProgram() }); dragging = null; }
+    if (dragging !== null) {
+        const prog = encodeProgram();
+        dragging = null;
+        drawTimeline();
+        save({ program: prog });
+    }
 };
 
 canvas.oncontextmenu = e => e.preventDefault();
