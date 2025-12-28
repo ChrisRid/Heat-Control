@@ -1,13 +1,60 @@
+const cluster = require('cluster');
+const os = require('os');
+
+// =============================================================================
+// Clustering - Use all available CPU cores
+// =============================================================================
+
+const numCPUs = os.cpus().length;
+
+if (cluster.isPrimary) {
+    console.log(`[Primary ${process.pid}] Starting with ${numCPUs} vCPUs available`);
+    
+    let activeWorkers = 0;
+    
+    const logWorkerCount = (event, workerId) => {
+        console.log(`[Primary] Worker ${workerId} ${event}. Active workers: ${activeWorkers}/${numCPUs}`);
+    };
+    
+    // Fork workers for each CPU
+    for (let i = 0; i < numCPUs; i++) {
+        cluster.fork();
+    }
+    
+    cluster.on('online', (worker) => {
+        activeWorkers++;
+        logWorkerCount('online', worker.process.pid);
+    });
+    
+    cluster.on('exit', (worker, code, signal) => {
+        activeWorkers--;
+        logWorkerCount(`exited (${signal || code})`, worker.process.pid);
+        
+        // Restart dead workers
+        console.log(`[Primary] Starting replacement worker...`);
+        cluster.fork();
+    });
+    
+} else {
+    // Worker process - run the Express server
+    startServer();
+}
+
+function startServer() {
+
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
 const { Pool } = require('pg');
 const path = require('path');
+
 const app = express();
 
+// #6 - Request body size limit (1kb is plenty for this API)
 app.use(express.json({ limit: '1kb' }));
 app.use(cookieParser());
 
+// #7 - Security headers
 app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -17,28 +64,42 @@ app.use((req, res, next) => {
     next();
 });
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// PostgreSQL pool - max connections per worker (total = max × numCPUs)
+const pool = new Pool({ 
+    connectionString: process.env.DATABASE_URL,
+    max: 10  // 10 per worker = 80 total with 8 workers
+});
+
+// #5 - Validation constants
 const TEMP_MIN = 10, TEMP_MAX = 30;
 const VALID_MODES = [0, 1];
 const VALID_BOOSTS = [0, 1, 2, 3];
 const PROGRAM_LENGTH = 168;
-const PROGRAM_PATTERN = /^[A-U]{168}$/; // A=10°C to U=30°C
+const PROGRAM_PATTERN = /^[A-U]{168}$/; // A=10Â°C to U=30Â°C
+
+// #8 - Timestamp window (2 minutes)
 const TIMESTAMP_WINDOW_MS = 120000;
 
+// Standardized error response
 const sendError = (res, status, message, extra = {}) => {
     res.status(status).json({ success: false, error: message, ...extra });
 };
 
+// Audit logger
 const auditLog = (event, deviceId, details = {}) => {
     const timestamp = new Date().toISOString();
     console.log(JSON.stringify({ timestamp, event, deviceId, ...details }));
 };
 
+// Rate limiter (100/min max, 5/sec regen, 1min memory)
 const rateLimits = new Map();
 const RATE_MAX = 100, RATE_REGEN = 5, RATE_WINDOW = 60000;
+
+// #13 - Brute force protection (10 second block after failed auth)
 const authBlocks = new Map();
 const AUTH_BLOCK_DURATION = 10000;
 
+// #25 - Cleanup every 30 seconds
 setInterval(() => {
     const now = Date.now();
     for (const [key, data] of rateLimits) {
@@ -74,6 +135,7 @@ const rateLimit = (req, res, next) => {
 
 app.use(rateLimit);
 
+// HTTPS enforcement
 app.use((req, res, next) => {
     if (req.headers['x-forwarded-proto'] === 'https' || req.secure || req.hostname === 'localhost') {
         return next();
@@ -81,6 +143,7 @@ app.use((req, res, next) => {
     sendError(res, 403, 'HTTPS required');
 });
 
+// #22 - Single device ID validation function
 const isValidDeviceId = (id) => typeof id === 'string' && /^[a-z0-9]{32}$/.test(id);
 
 const getDeviceId = (req, source) => {
@@ -102,6 +165,7 @@ const validateDeviceId = (source = 'params') => (req, res, next) => {
     next();
 };
 
+// #5 - Input validators
 const validateSetTemp = (temp) => {
     const t = parseInt(temp, 10);
     return !isNaN(t) && t >= TEMP_MIN && t <= TEMP_MAX ? t : null;
@@ -126,6 +190,7 @@ const validateTemp = (temp) => {
     return !isNaN(t) && t >= -40 && t <= 60 ? t : null; // Reasonable sensor range
 };
 
+// Reformat PEM key
 const formatPEM = (key) => {
     const b64 = key.replace(/-----BEGIN [^-]+-----/, '')
                    .replace(/-----END [^-]+-----/, '')
@@ -133,9 +198,11 @@ const formatPEM = (key) => {
     return '-----BEGIN PUBLIC KEY-----\n' + b64.match(/.{1,64}/g).join('\n') + '\n-----END PUBLIC KEY-----';
 };
 
+// Utility functions
 const hash = (str) => crypto.createHash('sha256').update(str).digest('hex');
 const randomHex = (bytes) => crypto.randomBytes(bytes).toString('hex');
 
+// #13 - Check if IP is blocked
 const isBlocked = (ip) => {
     const blockUntil = authBlocks.get(ip);
     return blockUntil && Date.now() < blockUntil;
@@ -145,6 +212,7 @@ const blockIp = (ip) => {
     authBlocks.set(ip, Date.now() + AUTH_BLOCK_DURATION);
 };
 
+// #8 - Verify hub signature with 2 minute window
 const verifyHubSignature = async (deviceId, timestamp, signature) => {
     const now = Date.now();
     const ts = parseInt(timestamp, 10);
@@ -168,6 +236,7 @@ const verifyHubSignature = async (deviceId, timestamp, signature) => {
     }
 };
 
+// #22 - Unified hub authentication middleware
 const requireHubAuth = async (req, res, next) => {
     const deviceId = getDeviceId(req, 'auto');
     const timestamp = req.body.timestamp || req.query.timestamp;
@@ -190,6 +259,7 @@ const requireHubAuth = async (req, res, next) => {
     next();
 };
 
+// #23 - Standardized auth check response
 app.get('/api/auth/check', validateDeviceId('query'), async (req, res) => {
     const cookie = req.cookies[`auth_${req.deviceId}`];
     if (!cookie) return res.json({ success: true, authenticated: false });
@@ -212,7 +282,9 @@ app.get('/api/auth/check', validateDeviceId('query'), async (req, res) => {
     }
 });
 
+// #13 - Start auth flow with brute force protection
 app.post('/api/auth/start', async (req, res) => {
+    // Check for brute force block
     if (isBlocked(req.ip)) {
         return sendError(res, 429, 'Too many attempts');
     }
@@ -243,6 +315,7 @@ app.post('/api/auth/start', async (req, res) => {
     }
 });
 
+// #23 - Poll auth status with standardized responses
 app.get('/api/auth/poll', validateDeviceId('query'), async (req, res) => {
     const { clientId } = req.query;
     const client = await pool.connect();
@@ -299,6 +372,7 @@ app.get('/api/auth/poll', validateDeviceId('query'), async (req, res) => {
     }
 });
 
+// Hub: Get nonce for signing (requires hub signature)
 app.get('/api/hub/nonce', requireHubAuth, async (req, res) => {
     try {
         const result = await pool.query(
@@ -318,9 +392,11 @@ app.get('/api/hub/nonce', requireHubAuth, async (req, res) => {
     }
 });
 
+// #13 - Hub: Submit signed auth with brute force protection
 app.post('/api/hub/auth', validateDeviceId('body'), async (req, res) => {
     const { signature } = req.body;
     
+    // Check for brute force block
     if (isBlocked(req.ip)) {
         return sendError(res, 429, 'Too many attempts');
     }
@@ -356,7 +432,7 @@ app.post('/api/hub/auth', validateDeviceId('body'), async (req, res) => {
         
         if (!valid) {
             auditLog('auth_invalid_signature', req.deviceId);
-            blockIp(req.ip);
+            blockIp(req.ip); // #13 - Block IP on failed auth
             return sendError(res, 401, 'Invalid signature');
         }
         
@@ -373,6 +449,7 @@ app.post('/api/hub/auth', validateDeviceId('body'), async (req, res) => {
     }
 });
 
+// Middleware to verify auth cookie for device endpoints
 const requireAuth = async (req, res, next) => {
     const deviceId = req.params.id;
     if (!isValidDeviceId(deviceId)) {
@@ -406,6 +483,7 @@ const requireAuth = async (req, res, next) => {
     }
 };
 
+// Get device state (client auth via cookie)
 app.get('/api/device/:id', requireAuth, async (req, res) => {
     try {
         const result = await pool.query(
@@ -422,12 +500,14 @@ app.get('/api/device/:id', requireAuth, async (req, res) => {
     }
 });
 
+// #5 - Update device state with input validation
 app.patch('/api/device/:id', requireAuth, async (req, res) => {
     const { set_temp, mode, boost, program } = req.body;
     const updates = [];
     const values = [];
     let idx = 1;
     
+    // Validate each field if provided
     if (set_temp !== undefined) {
         const validated = validateSetTemp(set_temp);
         if (validated === null) return sendError(res, 400, 'Invalid set_temp (must be 10-30)');
@@ -469,6 +549,7 @@ app.patch('/api/device/:id', requireAuth, async (req, res) => {
     }
 });
 
+// Hub: Get settings (requires hub signature)
 app.get('/api/hub/state', requireHubAuth, async (req, res) => {
     try {
         const result = await pool.query(
@@ -485,6 +566,7 @@ app.get('/api/hub/state', requireHubAuth, async (req, res) => {
     }
 });
 
+// #5 - Hub: Report temperature with validation
 app.post('/api/hub/temp', requireHubAuth, async (req, res) => {
     const { temp } = req.body;
     const validated = validateTemp(temp);
@@ -507,4 +589,6 @@ app.post('/api/hub/temp', requireHubAuth, async (req, res) => {
 app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`[Worker ${process.pid}] Server running on port ${PORT}`));
+
+} // end startServer()
