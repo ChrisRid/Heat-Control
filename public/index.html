@@ -12,9 +12,9 @@
             --border: #2a2b2e; --text: #f5f5f5; --text2: rgba(255,255,255,0.6); --text3: rgba(255,255,255,0.4);
             --accent: #00d4aa; --accent-glow: rgba(0,212,170,0.15);
             --danger: #ff6b6b; --heating: #ff9f43;
-            --blue: #4facfe; --blue-glow: rgba(79,172,254,0.15); --blue-border: rgba(79,172,254,0.5);
+            --blue: #3d8bd4; --blue-glow: rgba(61,139,212,0.15); --blue-border: rgba(61,139,212,0.5);
         }
-        body { font-family: 'DM Sans', sans-serif; background: var(--bg); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 20px; color: var(--text); }
+        body { font-family: 'DM Sans', sans-serif; background: var(--bg); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 20px; color: var(--text); }
         .hidden { display: none !important; }
         
         /* Auth */
@@ -28,7 +28,7 @@
         .auth-error { color: var(--danger); font-size: 13px; padding: 12px 20px; background: rgba(255,107,107,0.15); border-radius: 8px; margin-top: 16px; }
         
         /* Animated loading emoji */
-        .loading-emoji { font-size: 40px; margin: 0 auto 16px; animation: pulse 1.5s ease-in-out infinite; }
+        .loading-emoji { font-size: 40px; display: flex; align-items: center; justify-content: center; height: 100%; animation: pulse 1.5s ease-in-out infinite; }
         @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.1); opacity: 0.7; } }
 
         /* Main */
@@ -37,17 +37,17 @@
         .status.err { border-color: var(--danger); color: var(--danger); }
         .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
         
-        .card { background: var(--bg2); border-radius: 24px; padding: 32px 40px; text-align: center; border: 1px solid var(--border); width: min(92vw, 420px); position: relative; }
+        .card { background: var(--bg2); border-radius: 24px; padding: 32px 40px; text-align: center; border: 1px solid var(--border); width: min(94vw, 440px); position: relative; }
         .heat { position: absolute; top: 20px; right: 24px; font-size: 20px; opacity: 0; transition: opacity 0.3s; }
         .heat.on { opacity: 1; animation: flicker 0.5s ease-in-out infinite alternate; }
         @keyframes flicker { 0% { opacity: 0.8; } 100% { opacity: 1; } }
         .label { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: var(--text3); margin-bottom: 8px; font-weight: 500; }
-        .current { font-size: 72px; font-weight: 200; margin-bottom: 32px; color: var(--text); }
-        .current span { font-size: 24px; vertical-align: top; opacity: 0.5; }
-        .target-row { display: flex; align-items: center; justify-content: center; gap: 20px; }
-        .target { font-size: 36px; font-weight: 300; min-width: 100px; font-family: 'JetBrains Mono', monospace; }
-        .target span { font-size: 14px; color: var(--text3); }
-        .btn { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--blue-border); background: var(--blue-glow); color: var(--blue); font-size: 22px; cursor: pointer; transition: all 0.2s; }
+        .current { font-size: 84px; font-weight: 200; margin-bottom: 32px; color: var(--text); }
+        .current span { font-size: 28px; vertical-align: top; opacity: 0.5; }
+        .target-row { display: flex; align-items: center; justify-content: center; gap: 24px; }
+        .target { font-size: 42px; font-weight: 300; min-width: 110px; font-family: 'JetBrains Mono', monospace; }
+        .target span { font-size: 16px; color: var(--text3); }
+        .btn { width: 56px; height: 56px; border-radius: 50%; border: 1px solid var(--blue-border); background: var(--blue-glow); color: var(--blue); font-size: 26px; cursor: pointer; transition: all 0.2s; }
         .btn:hover { background: var(--blue); color: var(--bg); }
         .btn:active { transform: scale(0.95); }
         
@@ -524,7 +524,7 @@ function drawTimeline() {
     // Line
     const pts = (schedule[selectedDay] || []).slice().sort((a, b) => a.hour - b.hour);
     if (pts.length > 0) {
-        ctx.strokeStyle = '#4facfe';
+        ctx.strokeStyle = '#3d8bd4';
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(hourToX(0), tempToY(pts[0].temp));
@@ -538,9 +538,9 @@ function drawTimeline() {
         // Points
         pts.forEach(p => {
             const x = hourToX(p.hour), y = tempToY(p.temp);
-            ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fillStyle = 'rgba(79,172,254,0.2)'; ctx.fill();
-            ctx.strokeStyle = '#4facfe'; ctx.lineWidth = 2; ctx.stroke();
-            ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fillStyle = '#00f2fe'; ctx.fill();
+            ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fillStyle = 'rgba(61,139,212,0.2)'; ctx.fill();
+            ctx.strokeStyle = '#3d8bd4'; ctx.lineWidth = 2; ctx.stroke();
+            ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fillStyle = '#5ba8e8'; ctx.fill();
         });
     }
 }
