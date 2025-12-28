@@ -8,7 +8,7 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
             --bg: #08090a; --bg2: #1e1e1e; --bg3: #1a1b1e;
-            --border: #2a2b2e; --text: #f5f5f5; --text2: rgba(255,255,255,0.6); --text3: rgba(255,255,255,0.6);
+            --border: #2a2b2e; --text: #f5f5f5; --text2: rgba(255,255,255,0.6); --text3: rgba(255,255,255,0.8);
             --accent: #00d4aa; --accent-glow: rgba(0,212,170,0.15);
             --danger: #ff6b6b;
             --blue: #3d8bd4; --blue-glow: rgba(61,139,212,0.20); --blue-border: rgba(61,139,212,0.5);
@@ -53,11 +53,11 @@
         .day.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
         .timeline { position: relative; height: 240px; background: var(--bg); border-radius: 12px; overflow: hidden; }
         .timeline canvas { display: block; cursor: crosshair; width: 100%; height: 100%; }
-        .timeline-help { font-size: 10px; color: var(--text3); margin-top: 8px; }
+        .timeline-help { font-size: 12px; color: var(--text3); margin-top: 8px; }
         .sched-btns { display: flex; gap: 6px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
-        .sched-btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 9px; cursor: pointer; }
+        .sched-btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 9px; cursor: pointer; width: 120px; }
         .sched-btn.danger { border-color: rgba(255,107,107,0.3); color: var(--danger); background: rgba(255,107,107,0.1); }
-        .clear-day-row { display: flex; justify-content: center; margin-top: 8px; }
+        .clear-day-row { display: flex; justify-content: center; margin-top: 8px; padding-top: 5px; }
         .sync { position: fixed; bottom: 20px; right: 20px; padding: 8px 14px; background: var(--bg2); border: 1px solid var(--border); border-radius: 20px; font-size: 11px; color: var(--text3); opacity: 0; transition: all 0.3s; }
         .sync.show { opacity: 1; }
         .sync.ok { border-color: var(--accent); color: var(--accent); }
@@ -439,8 +439,8 @@ function drawTimeline() {
     for (let hr = 0; hr <= 24; hr++) { ctx.beginPath(); ctx.moveTo(hourToX(hr), a.t); ctx.lineTo(hourToX(hr), a.b); ctx.stroke(); }
     for (let t = TEMP_MIN; t <= TEMP_MAX; t++) { ctx.beginPath(); ctx.moveTo(a.l, tempToY(t)); ctx.lineTo(a.r, tempToY(t)); ctx.stroke(); }
     
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.font = `${Math.max(9, h * 0.04)}px ui-monospace, Menlo, Consolas, monospace`;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${Math.max(9, h * 0.04)}px ui-monospace, Menlo, Consolas, monospace`;
     ctx.textAlign = 'center';
     for (let hr = 0; hr <= 24; hr += 2) ctx.fillText(hr, hourToX(hr), a.b + h * 0.06);
     ctx.textAlign = 'right';
