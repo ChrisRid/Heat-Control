@@ -8,7 +8,7 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
             --bg: #08090a; --bg2: #1e1e1e; --bg3: #1a1b1e;
-            --border: #2a2b2e; --text: #f5f5f5; --text2: rgba(255,255,255,0.6); --text3: rgba(255,255,255,0.8);
+            --border: #2a2b2e; --text: #f5f5f5; --text2: rgba(255,255,255,0.6); --text3: rgba(255,255,255,0.9);
             --accent: #00d4aa; --accent-glow: rgba(0,212,170,0.15);
             --danger: #ff6b6b;
             --blue: #3d8bd4; --blue-glow: rgba(61,139,212,0.20); --blue-border: rgba(61,139,212,0.5);
@@ -68,7 +68,7 @@
     <div class="auth" id="auth">
         <div class="auth-icon" id="authIcon">&#x1F512;</div>
         <h1 id="authTitle">Authenticate</h1>
-        <p id="authMsg">Press the button below, then press the auth button on your hub within 60 seconds.</p>
+        <p id="authMsg">Press the button below, then press the connect button on your hub.</p>
         <button class="auth-btn" id="authBtn">Start Authentication</button>
         <div class="auth-error hidden" id="authErr"></div>
     </div>
@@ -106,8 +106,8 @@
                 <div class="timeline"><canvas id="canvas"></canvas></div>
                 <div class="timeline-help">Tap to add &bull; Drag to move &bull; Long-press to delete</div>
                 <div class="sched-btns">
-                    <button class="sched-btn" id="copyPrev">&larr; Copy Previous Day</button>
-                    <button class="sched-btn" id="copyNext">Copy Next Day &rarr;</button>
+                    <button class="sched-btn" id="copyPrev">Copy Previous Day</button>
+                    <button class="sched-btn" id="copyNext">Copy Next Day</button>
                 </div>
                 <div class="clear-day-row">
                     <button class="sched-btn danger" id="clearDay">Clear Day</button>
@@ -123,8 +123,8 @@ const API = '/api';
 const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const TEMP_MIN = 10, TEMP_MAX = 30;
 const POLL_INTERVAL_MS = 5000;
-const AUTH_POLL_INTERVAL_MS = 2000;
-const AUTH_TIMEOUT_MS = 62000;
+const AUTH_POLL_INTERVAL_MS = 1000;
+const AUTH_TIMEOUT_MS = 61000;
 
 function createDebouncer(delayMs) {
     let timer = null;
@@ -234,7 +234,7 @@ async function startAuth() {
 function resetAuth(err) {
     authIcon.innerHTML = '&#x1F512;';
     authTitle.textContent = 'Authenticate';
-    authMsg.textContent = 'Press the button below, then press the auth button on your hub within 60 seconds.';
+    authMsg.textContent = 'Press the button below, then press the auth button on your hub.';
     authBtn.classList.remove('hidden');
     authBtn.disabled = false;
     if (err) {
