@@ -10,13 +10,12 @@
             --bg: #08090a; --bg2: #1e1e1e; --bg3: #1a1b1e;
             --border: #2a2b2e; --text: #f5f5f5; --text2: rgba(255,255,255,0.6); --text3: rgba(255,255,255,0.6);
             --accent: #00d4aa; --accent-glow: rgba(0,212,170,0.15);
-            --danger: #ff6b6b; --heating: #ff9f43;
+            --danger: #ff6b6b;
             --blue: #3d8bd4; --blue-glow: rgba(61,139,212,0.20); --blue-border: rgba(61,139,212,0.5);
         }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: var(--bg); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 20px; color: var(--text); }
         .hidden { display: none !important; }
         
-        /* Auth */
         .auth { text-align: center; }
         .auth-icon { width: 80px; height: 80px; border-radius: 50%; background: var(--blue-glow); border: 2px solid var(--blue); display: flex; align-items: center; justify-content: center; font-size: 36px; margin: 0 auto 24px; }
         .auth h1 { font-size: 24px; font-weight: 300; margin-bottom: 12px; }
@@ -24,20 +23,10 @@
         .auth-btn { padding: 14px 32px; border-radius: 12px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
         .auth-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .auth-error { color: var(--danger); font-size: 13px; padding: 12px 20px; background: rgba(255,107,107,0.15); border-radius: 8px; margin-top: 16px; }
-        
-        /* Invalid device state - red styling */
         .auth.invalid .auth-icon { background: rgba(255,107,107,0.1); border-color: var(--danger); }
-        
-        /* Animated loading emoji */
         .loading-emoji { font-size: 40px; display: flex; align-items: center; justify-content: center; height: 100%; animation: pulse 1.5s ease-in-out infinite; }
         @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.1); opacity: 0.7; } }
 
-        /* Main */
-        .status { position: fixed; top: 16px; right: 16px; display: flex; align-items: center; gap: 8px; padding: 8px 14px; background: var(--bg2); border: 1px solid var(--border); border-radius: 20px; font-size: 11px; color: var(--text3); }
-        .status.ok { border-color: var(--accent); color: var(--accent); }
-        .status.err { border-color: var(--danger); color: var(--danger); }
-        .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-        
         .card { background: var(--bg2); border-radius: 24px; padding: 32px 40px; text-align: center; border: 1px solid var(--border); width: min(94vw, 440px); position: relative; margin-bottom: 12px; }
         .card:last-of-type { margin-bottom: 0; }
         .heat { position: absolute; top: 20px; right: 24px; font-size: 20px; opacity: 0; transition: opacity 0.3s; }
@@ -51,14 +40,12 @@
         .target span:last-child { font-size: 14px; color: var(--text3); vertical-align: top; }
         .btn { width: 50px; height: 50px; border-radius: 50%; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 26px; cursor: pointer; transition: all 0.2s; }
         .btn:active { transform: scale(0.95); }
-        
         .section { margin-top: 28px; padding-top: 5px; }
         .btn-group { display: flex; gap: 8px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
         .opt { padding: 10px 16px; border-radius: 10px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 11px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
         .opt.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
         .opt:disabled { opacity: 0.3; cursor: not-allowed; }
 
-        /* Program */
         .program { padding: 24px 32px; }
         .days { display: flex; gap: 4px; margin: 16px 0; flex-wrap: wrap; justify-content: center; }
         .day { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 10px; font-weight: 500; cursor: pointer; }
@@ -70,7 +57,6 @@
         .sched-btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 9px; cursor: pointer; }
         .sched-btn.danger { border-color: rgba(255,107,107,0.3); color: var(--danger); background: rgba(255,107,107,0.1); }
         .clear-day-row { display: flex; justify-content: center; margin-top: 8px; }
-        
         .sync { position: fixed; bottom: 20px; right: 20px; padding: 8px 14px; background: var(--bg2); border: 1px solid var(--border); border-radius: 20px; font-size: 11px; color: var(--text3); opacity: 0; transition: all 0.3s; }
         .sync.show { opacity: 1; }
         .sync.ok { border-color: var(--accent); color: var(--accent); }
@@ -87,8 +73,6 @@
     </div>
 
     <div class="hidden" id="main">
-        <div class="status" id="status"><span class="status-dot"></span><span id="statusTxt">Connecting...</span></div>
-        
         <div class="card">
             <div class="heat" id="heat">&#x1F525;</div>
             <div class="label">Current Temperature</div>
@@ -140,57 +124,34 @@ const TEMP_MIN = 10, TEMP_MAX = 30;
 const POLL_INTERVAL_MS = 5000;
 const AUTH_POLL_INTERVAL_MS = 2000;
 const AUTH_TIMEOUT_MS = 62000;
-const log = {
-    error: (context, err) => console.error(`[${context}]`, err?.message || err || 'Unknown error'),
-    warn: (context, msg) => console.warn(`[${context}]`, msg),
-    info: (context, msg) => console.info(`[${context}]`, msg)
-};
 
 function createDebouncer(delayMs) {
     let timer = null;
-    return function(fn) {
-        clearTimeout(timer);
-        timer = setTimeout(fn, delayMs);
-    };
+    return fn => { clearTimeout(timer); timer = setTimeout(fn, delayMs); };
 }
 
-// =============================================================================
-// Device ID Validation
-// =============================================================================
 function getDeviceId() {
     const raw = new URLSearchParams(location.search).get('id') || '';
     const sanitized = raw.replace(/[^a-z0-9]/g, '').substring(0, 32);
     return /^[a-z0-9]{32}$/.test(sanitized) ? sanitized : null;
 }
 
-// =============================================================================
-// Application State
-// =============================================================================
 let deviceId = getDeviceId();
 let state = { cur: null, tar: 21, mode: 0, boost: 0, program: '' };
 let selectedDay = 0;
 let schedule = [[],[],[],[],[],[],[]];
 let pollTimer = null;
 let dragging = null;
-
-// Track pending changes to prevent poll from overwriting unsaved state
 let pendingChanges = {};
 
 const debouncedSave = createDebouncer(500);
 
-// =============================================================================
-// DOM Elements
-// =============================================================================
 const $ = id => document.getElementById(id);
 const auth = $('auth'), main = $('main'), authIcon = $('authIcon'), authTitle = $('authTitle');
 const authMsg = $('authMsg'), authBtn = $('authBtn'), authErr = $('authErr');
-const status = $('status'), statusTxt = $('statusTxt'), heat = $('heat');
-const cur = $('cur'), tar = $('tar'), sync = $('sync');
+const heat = $('heat'), cur = $('cur'), tar = $('tar'), sync = $('sync');
 const canvas = $('canvas'), ctx = canvas.getContext('2d');
 
-// =============================================================================
-// Initialization
-// =============================================================================
 if (!deviceId) {
     authTitle.textContent = 'Invalid Device';
     authMsg.textContent = 'Scan a valid QR code from your hub.';
@@ -201,16 +162,13 @@ if (!deviceId) {
     checkAuth();
 }
 
-// =============================================================================
-// Authentication Flow
-// =============================================================================
 async function checkAuth() {
     try {
         const res = await fetch(`${API}/auth/check?id=${deviceId}`, { credentials: 'include' });
         const data = await res.json();
         if (data.authenticated) showMain();
     } catch (err) {
-        log.error('checkAuth', err);
+        console.error('[checkAuth]', err);
     }
 }
 
@@ -263,11 +221,11 @@ async function startAuth() {
                     resetAuth(d.error || 'Authentication error');
                 }
             } catch (err) {
-                log.error('authPoll', err);
+                console.error('[authPoll]', err);
             }
         }, AUTH_POLL_INTERVAL_MS);
     } catch (err) {
-        log.error('startAuth', err);
+        console.error('[startAuth]', err);
         resetAuth(err.message || 'Failed to start');
     }
 }
@@ -281,13 +239,9 @@ function resetAuth(err) {
     if (err) {
         authErr.textContent = err;
         authErr.classList.remove('hidden');
-        log.warn('auth', err);
     }
 }
 
-// =============================================================================
-// Main Application
-// =============================================================================
 function showMain() {
     auth.classList.add('hidden');
     main.classList.remove('hidden');
@@ -302,31 +256,21 @@ async function fetchState() {
         const res = await fetch(`${API}/device/${deviceId}`, { credentials: 'include' });
         if (!res.ok) {
             const data = await res.json();
+            if (data.needsAuth) { location.reload(); return; }
             throw new Error(data.error || `HTTP ${res.status}`);
         }
         const d = await res.json();
         
-        // Only update state for fields that don't have pending changes
-        // This prevents the poll from overwriting optimistic UI updates
         if (!('set_temp' in pendingChanges)) state.tar = d.set_temp;
         if (!('mode' in pendingChanges)) state.mode = d.mode;
         if (!('boost' in pendingChanges)) state.boost = d.boost;
         if (!('program' in pendingChanges)) decodeProgram(d.program);
-        
-        // current_temp always comes from server (read-only)
         state.cur = d.current_temp;
         
         render();
-        setStatus('ok', 'Connected');
     } catch (err) {
-        log.error('fetchState', err);
-        setStatus('err', 'Connection Lost');
+        console.error('[fetchState]', err);
     }
-}
-
-function setStatus(type, txt) {
-    status.className = 'status ' + type;
-    statusTxt.textContent = txt;
 }
 
 function showSync(ok) {
@@ -336,11 +280,9 @@ function showSync(ok) {
 }
 
 function save(updates) {
-    // Track pending changes to protect from poll overwrites
     Object.assign(pendingChanges, updates);
     
     debouncedSave(async () => {
-        // Snapshot what we're about to save
         const toSave = { ...pendingChanges };
         
         try {
@@ -352,20 +294,19 @@ function save(updates) {
             });
             if (!res.ok) {
                 const data = await res.json();
+                if (data.needsAuth) { location.reload(); return; }
                 throw new Error(data.error || `HTTP ${res.status}`);
             }
             showSync(true);
             
-            // Clear only the changes we just saved (preserve any newer changes)
             for (const key of Object.keys(toSave)) {
                 if (JSON.stringify(pendingChanges[key]) === JSON.stringify(toSave[key])) {
                     delete pendingChanges[key];
                 }
             }
         } catch (err) {
-            log.error('save', err);
+            console.error('[save]', err);
             showSync(false);
-            // On error, clear pending and let next poll restore correct state
             pendingChanges = {};
         }
     });
@@ -382,66 +323,32 @@ function render() {
     
     $('modeManual').classList.toggle('active', state.mode === 0);
     $('modeProgram').classList.toggle('active', state.mode === 1);
-    
-    // Hide entire program panel (including boost) when in manual mode
     $('programPanel').classList.toggle('hidden', state.mode === 0);
     
     if (state.mode === 1) drawTimeline();
 }
 
-// =============================================================================
-// Temperature Controls
-// =============================================================================
 $('dec').onclick = () => {
-    if (state.tar > TEMP_MIN) {
-        state.tar--;
-        render();
-        save({ set_temp: state.tar });
-    }
+    if (state.tar > TEMP_MIN) { state.tar--; render(); save({ set_temp: state.tar }); }
 };
 
 $('inc').onclick = () => {
-    if (state.tar < TEMP_MAX) {
-        state.tar++;
-        render();
-        save({ set_temp: state.tar });
-    }
+    if (state.tar < TEMP_MAX) { state.tar++; render(); save({ set_temp: state.tar }); }
 };
 
-// =============================================================================
-// Boost Controls
-// =============================================================================
 document.querySelectorAll('[data-boost]').forEach(b => {
-    b.onclick = () => {
-        state.boost = parseInt(b.dataset.boost);
-        render();
-        save({ boost: state.boost });
-    };
+    b.onclick = () => { state.boost = parseInt(b.dataset.boost); render(); save({ boost: state.boost }); };
 });
 
-// =============================================================================
-// Mode Controls
-// =============================================================================
-$('modeManual').onclick = () => {
-    state.mode = 0;
-    state.boost = 0;
-    render();
-    save({ mode: 0, boost: 0 });
-};
+$('modeManual').onclick = () => { state.mode = 0; state.boost = 0; render(); save({ mode: 0, boost: 0 }); };
 
 $('modeProgram').onclick = () => {
     state.mode = 1;
     render();
     save({ mode: 1 });
-    setTimeout(() => {
-        resizeCanvas();
-        drawTimeline();
-    }, 100);
+    setTimeout(() => { resizeCanvas(); drawTimeline(); }, 100);
 };
 
-// =============================================================================
-// Days Selector
-// =============================================================================
 function initDays() {
     const c = $('days');
     DAYS.forEach((d, i) => {
@@ -458,9 +365,6 @@ function initDays() {
     });
 }
 
-// =============================================================================
-// Program Encoding/Decoding (A=10°C to U=30°C)
-// =============================================================================
 function decodeProgram(prog) {
     schedule = [[],[],[],[],[],[],[]];
     if (!prog || prog.length !== 168) return;
@@ -483,24 +387,15 @@ function encodeProgram() {
         let curTemp = pts.length > 0 ? pts[0].temp : 21;
         let ptIdx = 0;
         for (let h = 0; h < 24; h++) {
-            while (ptIdx < pts.length && pts[ptIdx].hour <= h) {
-                curTemp = pts[ptIdx].temp;
-                ptIdx++;
-            }
-            const clampedTemp = Math.max(TEMP_MIN, Math.min(TEMP_MAX, curTemp));
-            prog += String.fromCharCode(clampedTemp - TEMP_MIN + 65);
+            while (ptIdx < pts.length && pts[ptIdx].hour <= h) { curTemp = pts[ptIdx].temp; ptIdx++; }
+            prog += String.fromCharCode(Math.max(TEMP_MIN, Math.min(TEMP_MAX, curTemp)) - TEMP_MIN + 65);
         }
     }
     return prog;
 }
 
-// =============================================================================
-// Canvas / Timeline
-// =============================================================================
 function resizeCanvas() {
-    const w = $('programPanel').offsetWidth - 64;
-    const h = 160;
-    const dpr = devicePixelRatio || 1;
+    const w = $('programPanel').offsetWidth - 64, h = 160, dpr = devicePixelRatio || 1;
     canvas.width = w * dpr;
     canvas.height = h * dpr;
     canvas.style.width = w + 'px';
@@ -526,13 +421,11 @@ function drawTimeline() {
     
     const a = getArea();
     
-    // Grid
     ctx.strokeStyle = 'rgba(255,255,255,0.05)';
     ctx.lineWidth = 1;
     for (let h = 0; h <= 24; h++) { ctx.beginPath(); ctx.moveTo(hourToX(h), a.t); ctx.lineTo(hourToX(h), a.b); ctx.stroke(); }
     for (let t = TEMP_MIN; t <= TEMP_MAX; t++) { ctx.beginPath(); ctx.moveTo(a.l, tempToY(t)); ctx.lineTo(a.r, tempToY(t)); ctx.stroke(); }
     
-    // Labels
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.font = '8px ui-monospace, Menlo, Consolas, monospace';
     ctx.textAlign = 'center';
@@ -540,7 +433,6 @@ function drawTimeline() {
     ctx.textAlign = 'right';
     for (let t = TEMP_MIN; t <= TEMP_MAX; t += 5) ctx.fillText(t + '\u00B0', a.l - 5, tempToY(t) + 3);
     
-    // Line
     const pts = (schedule[selectedDay] || []).slice().sort((a, b) => a.hour - b.hour);
     if (pts.length > 0) {
         ctx.strokeStyle = '#3d8bd4';
@@ -554,7 +446,6 @@ function drawTimeline() {
         ctx.lineTo(hourToX(24), tempToY(pts[pts.length - 1].temp));
         ctx.stroke();
         
-        // Points
         pts.forEach(p => {
             const x = hourToX(p.hour), y = tempToY(p.temp);
             ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fillStyle = 'rgba(61,139,212,0.2)'; ctx.fill();
@@ -579,9 +470,6 @@ function getPos(e) {
     return { x: t.clientX - r.left, y: t.clientY - r.top };
 }
 
-// =============================================================================
-// Canvas Mouse Events
-// =============================================================================
 canvas.onmousedown = e => {
     const p = getPos(e), a = getArea();
     if (p.x < a.l || p.x > a.r || p.y < a.t || p.y > a.b) return;
@@ -614,9 +502,6 @@ canvas.onmouseup = canvas.onmouseleave = () => {
     if (dragging !== null) { save({ program: encodeProgram() }); dragging = null; canvas.style.cursor = 'crosshair'; }
 };
 
-// =============================================================================
-// Canvas Touch Events
-// =============================================================================
 let longPress = null, longFired = false;
 
 canvas.ontouchstart = e => {
@@ -659,28 +544,19 @@ canvas.ontouchend = () => {
 canvas.oncontextmenu = e => e.preventDefault();
 window.onresize = () => { if (state.mode === 1) { resizeCanvas(); drawTimeline(); } };
 
-// =============================================================================
-// Schedule Buttons
-// =============================================================================
 $('copyPrev').onclick = () => {
-    const prev = selectedDay === 0 ? 6 : selectedDay - 1;
-    schedule[selectedDay] = schedule[prev].map(p => ({...p}));
+    schedule[selectedDay] = schedule[selectedDay === 0 ? 6 : selectedDay - 1].map(p => ({...p}));
     drawTimeline();
     save({ program: encodeProgram() });
 };
 
 $('copyNext').onclick = () => {
-    const next = selectedDay === 6 ? 0 : selectedDay + 1;
-    schedule[selectedDay] = schedule[next].map(p => ({...p}));
+    schedule[selectedDay] = schedule[selectedDay === 6 ? 0 : selectedDay + 1].map(p => ({...p}));
     drawTimeline();
     save({ program: encodeProgram() });
 };
 
-$('clearDay').onclick = () => {
-    schedule[selectedDay] = [];
-    drawTimeline();
-    save({ program: encodeProgram() });
-};
+$('clearDay').onclick = () => { schedule[selectedDay] = []; drawTimeline(); save({ program: encodeProgram() }); };
 </script>
 </body>
 </html>
