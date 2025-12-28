@@ -22,7 +22,6 @@
         .auth h1 { font-size: 24px; font-weight: 300; margin-bottom: 12px; }
         .auth p { font-size: 14px; color: var(--text2); max-width: 280px; margin: 0 auto 24px; }
         .auth-btn { padding: 14px 32px; border-radius: 12px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
-        .auth-btn:hover { background: var(--blue); color: var(--bg); }
         .auth-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .auth-error { color: var(--danger); font-size: 13px; padding: 12px 20px; background: rgba(255,107,107,0.15); border-radius: 8px; margin-top: 16px; }
         
@@ -51,13 +50,11 @@
         .target { font-size: 36px; font-weight: 200; min-width: 110px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; line-height: 1; }
         .target span:last-child { font-size: 14px; color: var(--text3); vertical-align: top; }
         .btn { width: 50px; height: 50px; border-radius: 50%; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 26px; cursor: pointer; transition: all 0.2s; }
-        .btn:hover { background: var(--blue); color: var(--bg); }
         .btn:active { transform: scale(0.95); }
         
         .section { margin-top: 28px; padding-top: 5px; }
         .btn-group { display: flex; gap: 8px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
         .opt { padding: 10px 16px; border-radius: 10px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 11px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
-        .opt:hover { background: var(--blue); color: var(--bg); }
         .opt.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
         .opt:disabled { opacity: 0.3; cursor: not-allowed; }
 
@@ -65,16 +62,13 @@
         .program { padding: 24px 32px; }
         .days { display: flex; gap: 4px; margin: 16px 0; flex-wrap: wrap; justify-content: center; }
         .day { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 10px; font-weight: 500; cursor: pointer; }
-        .day:hover { background: var(--blue); color: var(--bg); }
         .day.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
         .timeline { position: relative; height: 160px; background: var(--bg); border-radius: 12px; overflow: hidden; }
         .timeline canvas { display: block; cursor: crosshair; }
         .timeline-help { font-size: 10px; color: var(--text3); margin-top: 8px; }
         .sched-btns { display: flex; gap: 6px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
         .sched-btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 9px; cursor: pointer; }
-        .sched-btn:hover { background: var(--blue); color: var(--bg); }
         .sched-btn.danger { border-color: rgba(255,107,107,0.3); color: var(--danger); background: rgba(255,107,107,0.1); }
-        .sched-btn.danger:hover { background: rgba(255,107,107,0.25); }
         .clear-day-row { display: flex; justify-content: center; margin-top: 8px; }
         
         .sync { position: fixed; bottom: 20px; right: 20px; padding: 8px 14px; background: var(--bg2); border: 1px solid var(--border); border-radius: 20px; font-size: 11px; color: var(--text3); opacity: 0; transition: all 0.3s; }
@@ -142,8 +136,8 @@
 <script>
 const API = '/api';
 const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-const TEMP_MIN = 10, TEMP_MAX = 30;  // #35 - Unified 10-30 range
-const POLL_INTERVAL_MS = 5000;        // #37 - Poll every 5 seconds
+const TEMP_MIN = 10, TEMP_MAX = 30;
+const POLL_INTERVAL_MS = 5000;
 const AUTH_POLL_INTERVAL_MS = 2000;
 const AUTH_TIMEOUT_MS = 62000;
 const log = {
@@ -178,6 +172,9 @@ let selectedDay = 0;
 let schedule = [[],[],[],[],[],[],[]];
 let pollTimer = null;
 let dragging = null;
+
+// Track pending changes to prevent poll from overwriting unsaved state
+let pendingChanges = {};
 
 const debouncedSave = createDebouncer(500);
 
@@ -297,7 +294,6 @@ function showMain() {
     initDays();
     resizeCanvas();
     fetchState();
-    // #37 - Poll every 5 seconds
     pollTimer = setInterval(fetchState, POLL_INTERVAL_MS);
 }
 
@@ -309,11 +305,17 @@ async function fetchState() {
             throw new Error(data.error || `HTTP ${res.status}`);
         }
         const d = await res.json();
+        
+        // Only update state for fields that don't have pending changes
+        // This prevents the poll from overwriting optimistic UI updates
+        if (!('set_temp' in pendingChanges)) state.tar = d.set_temp;
+        if (!('mode' in pendingChanges)) state.mode = d.mode;
+        if (!('boost' in pendingChanges)) state.boost = d.boost;
+        if (!('program' in pendingChanges)) decodeProgram(d.program);
+        
+        // current_temp always comes from server (read-only)
         state.cur = d.current_temp;
-        state.tar = d.set_temp;
-        state.mode = d.mode;
-        state.boost = d.boost;
-        decodeProgram(d.program);
+        
         render();
         setStatus('ok', 'Connected');
     } catch (err) {
@@ -334,12 +336,18 @@ function showSync(ok) {
 }
 
 function save(updates) {
+    // Track pending changes to protect from poll overwrites
+    Object.assign(pendingChanges, updates);
+    
     debouncedSave(async () => {
+        // Snapshot what we're about to save
+        const toSave = { ...pendingChanges };
+        
         try {
             const res = await fetch(`${API}/device/${deviceId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(updates),
+                body: JSON.stringify(toSave),
                 credentials: 'include'
             });
             if (!res.ok) {
@@ -347,9 +355,18 @@ function save(updates) {
                 throw new Error(data.error || `HTTP ${res.status}`);
             }
             showSync(true);
+            
+            // Clear only the changes we just saved (preserve any newer changes)
+            for (const key of Object.keys(toSave)) {
+                if (JSON.stringify(pendingChanges[key]) === JSON.stringify(toSave[key])) {
+                    delete pendingChanges[key];
+                }
+            }
         } catch (err) {
             log.error('save', err);
             showSync(false);
+            // On error, clear pending and let next poll restore correct state
+            pendingChanges = {};
         }
     });
 }
@@ -442,7 +459,7 @@ function initDays() {
 }
 
 // =============================================================================
-// #35 - Program Encoding/Decoding (A=10°C to U=30°C)
+// Program Encoding/Decoding (A=10°C to U=30°C)
 // =============================================================================
 function decodeProgram(prog) {
     schedule = [[],[],[],[],[],[],[]];
@@ -470,7 +487,6 @@ function encodeProgram() {
                 curTemp = pts[ptIdx].temp;
                 ptIdx++;
             }
-            // Clamp to valid range and encode
             const clampedTemp = Math.max(TEMP_MIN, Math.min(TEMP_MAX, curTemp));
             prog += String.fromCharCode(clampedTemp - TEMP_MIN + 65);
         }
@@ -522,7 +538,6 @@ function drawTimeline() {
     ctx.textAlign = 'center';
     for (let h = 0; h <= 24; h += 2) ctx.fillText(String(h).padStart(2, '0'), hourToX(h), a.b + 11);
     ctx.textAlign = 'right';
-    // Show temperature labels at intervals
     for (let t = TEMP_MIN; t <= TEMP_MAX; t += 5) ctx.fillText(t + '\u00B0', a.l - 5, tempToY(t) + 3);
     
     // Line
