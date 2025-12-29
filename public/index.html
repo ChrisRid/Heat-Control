@@ -220,13 +220,13 @@ function createDebouncer(delayMs) {
     return fn => { clearTimeout(timer); timer = setTimeout(fn, delayMs); };
 }
 
-function getDeviceId() {
+function getHubId() {
     const raw = new URLSearchParams(location.search).get('id') || '';
     const sanitized = raw.replace(/[^a-z0-9]/g, '').substring(0, 32);
     return /^[a-z0-9]{32}$/.test(sanitized) ? sanitized : null;
 }
 
-let deviceId = getDeviceId();
+let hubId = getHubId();
 let state = { cur: null, tar: 21, mode: 0, boost: 0, program: '' };
 let selectedDay = 0;
 let schedule = [[],[],[],[],[],[],[]];
@@ -254,8 +254,8 @@ document.addEventListener('DOMContentLoaded', () => {
     $('revokeConfirm').onclick = revokeAllSessions;
 });
 
-if (!deviceId) {
-    authTitle.textContent = 'Invalid Device';
+if (!hubId) {
+    authTitle.textContent = 'Invalid Hub';
     authMsg.textContent = 'Scan a valid QR code from your hub.';
     authBtn.classList.add('hidden');
     authIcon.innerHTML = '&#x26A0;';
@@ -266,7 +266,7 @@ if (!deviceId) {
 
 async function checkAuth() {
     try {
-        const res = await fetch(`${API}/auth/check?id=${deviceId}`, { credentials: 'include' });
+        const res = await fetch(`${API}/auth/check?id=${hubId}`, { credentials: 'include' });
         const data = await res.json();
         if (data.authenticated) showMain();
     } catch (err) {
@@ -284,7 +284,7 @@ async function startAuth() {
         const res = await fetch(`${API}/auth/start`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ deviceId })
+            body: JSON.stringify({ hubId })
         });
         
         if (!res.ok) {
@@ -324,7 +324,7 @@ async function startAuth() {
                 return;
             }
             try {
-                const r = await fetch(`${API}/auth/poll?id=${deviceId}&clientId=${clientId}`, { credentials: 'include' });
+                const r = await fetch(`${API}/auth/poll?id=${hubId}&clientId=${clientId}`, { credentials: 'include' });
                 const d = await r.json();
                 if (d.status === 'authenticated') {
                     clearInterval(poll);
@@ -375,7 +375,7 @@ function showMain() {
 
 async function fetchState() {
     try {
-        const res = await fetch(`${API}/device/${deviceId}`, { credentials: 'include' });
+        const res = await fetch(`${API}/hub/${hubId}`, { credentials: 'include' });
         if (!res.ok) {
             const data = await res.json();
             if (data.needsAuth) { location.reload(); return; }
@@ -397,7 +397,7 @@ async function fetchState() {
 
 async function fetchSessionCount() {
     try {
-        const res = await fetch(`${API}/device/${deviceId}/sessions`, { credentials: 'include' });
+        const res = await fetch(`${API}/hub/${hubId}/sessions`, { credentials: 'include' });
         if (!res.ok) return;
         const data = await res.json();
         sessionCount = data.count || 0;
@@ -417,7 +417,7 @@ async function revokeAllSessions() {
     revokeModal.classList.add('hidden');
     
     try {
-        const res = await fetch(`${API}/device/${deviceId}/sessions`, {
+        const res = await fetch(`${API}/hub/${hubId}/sessions`, {
             method: 'DELETE',
             credentials: 'include'
         });
@@ -448,7 +448,7 @@ function save(updates) {
         const toSave = { ...pendingChanges };
         
         try {
-            const res = await fetch(`${API}/device/${deviceId}`, {
+            const res = await fetch(`${API}/hub/${hubId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(toSave),
