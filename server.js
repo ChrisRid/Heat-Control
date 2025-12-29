@@ -81,10 +81,13 @@ const TEMP_MIN = 10, TEMP_MAX = 30;
 const VALID_MODES = [0, 1];
 const VALID_BOOSTS = [0, 1, 2, 3];
 const PROGRAM_LENGTH = 168;
-const PROGRAM_PATTERN = /^[A-U]{168}$/; // A=10Â°C to U=30Â°C
+const PROGRAM_PATTERN = /^[A-U]{168}$/; // A=10°C to U=30°C
 
 // #8 - Timestamp window (2 minutes)
 const TIMESTAMP_WINDOW_MS = 120000;
+
+// Server readiness flag - prevents auth requests until startup cleanup completes
+let serverReady = false;
 
 // Standardized error response
 const sendError = (res, status, message, extra = {}) => {
@@ -265,6 +268,33 @@ const requireHubAuth = async (req, res, next) => {
     next();
 };
 
+// Startup cleanup - clear any stale auth states from previous server instance
+const clearStaleAuthStates = async () => {
+    try {
+        const result = await pool.query(
+            'UPDATE authentication SET auth_nonce = NULL, client_id = NULL WHERE client_id IS NOT NULL'
+        );
+        const cleared = result.rowCount || 0;
+        if (cleared > 0) {
+            auditLog('startup_cleanup', null, { cleared_auth_states: cleared });
+        }
+        console.log(`[Worker ${process.pid}] Startup cleanup complete (cleared ${cleared} stale auth states)`);
+        serverReady = true;
+    } catch (err) {
+        console.error(`[Worker ${process.pid}] Startup cleanup failed:`, err.message);
+        // Retry after a short delay
+        setTimeout(clearStaleAuthStates, 1000);
+    }
+};
+
+// Middleware to check server readiness for auth endpoints
+const requireServerReady = (req, res, next) => {
+    if (!serverReady) {
+        return sendError(res, 425, 'Server starting up, please retry shortly');
+    }
+    next();
+};
+
 // #23 - Standardized auth check response
 app.get('/api/auth/check', validateDeviceId('query'), async (req, res) => {
     const cookie = req.cookies[`auth_${req.deviceId}`];
@@ -288,8 +318,8 @@ app.get('/api/auth/check', validateDeviceId('query'), async (req, res) => {
     }
 });
 
-// #13 - Start auth flow with brute force protection
-app.post('/api/auth/start', async (req, res) => {
+// #13 - Start auth flow with brute force protection and conflict detection
+app.post('/api/auth/start', requireServerReady, async (req, res) => {
     // Check for brute force block
     if (isBlocked(req.ip)) {
         return sendError(res, 429, 'Too many attempts');
@@ -300,29 +330,56 @@ app.post('/api/auth/start', async (req, res) => {
         return sendError(res, 400, 'Invalid device ID');
     }
     
-    const nonce = randomHex(16);
-    const clientId = randomHex(16);
-    const expires = Date.now() + 60000;
+    const client = await pool.connect();
     
     try {
-        const result = await pool.query(
-            `UPDATE authentication SET auth_nonce = $1, auth_expires = $2, client_id = $3
-             WHERE device_id = $4 RETURNING device_id`,
-            [nonce, expires, clientId, deviceId]
+        await client.query('BEGIN');
+        
+        // Check if device exists and if there's an active auth in progress
+        const checkResult = await client.query(
+            'SELECT client_id, auth_expires FROM authentication WHERE device_id = $1 FOR UPDATE',
+            [deviceId]
         );
-        if (result.rows.length === 0) {
+        
+        if (checkResult.rows.length === 0) {
+            await client.query('ROLLBACK');
             return sendError(res, 404, 'Device not found');
         }
+        
+        const row = checkResult.rows[0];
+        
+        // If there's an active (non-expired) auth in progress, reject
+        if (row.client_id && row.auth_expires && Date.now() < row.auth_expires) {
+            await client.query('ROLLBACK');
+            auditLog('auth_conflict', deviceId);
+            return sendError(res, 409, 'Authentication already in progress');
+        }
+        
+        const nonce = randomHex(16);
+        const clientId = randomHex(16);
+        const expires = Date.now() + 60000;
+        
+        await client.query(
+            `UPDATE authentication SET auth_nonce = $1, auth_expires = $2, client_id = $3
+             WHERE device_id = $4`,
+            [nonce, expires, clientId, deviceId]
+        );
+        
+        await client.query('COMMIT');
+        
         auditLog('auth_started', deviceId);
         res.json({ success: true, clientId });
     } catch (err) {
+        await client.query('ROLLBACK');
         auditLog('auth_start_error', deviceId, { error: err.message });
         sendError(res, 500, 'Server error');
+    } finally {
+        client.release();
     }
 });
 
 // #23 - Poll auth status with standardized responses
-app.get('/api/auth/poll', validateDeviceId('query'), async (req, res) => {
+app.get('/api/auth/poll', requireServerReady, validateDeviceId('query'), async (req, res) => {
     const { clientId } = req.query;
     const client = await pool.connect();
     
@@ -345,7 +402,12 @@ app.get('/api/auth/poll', validateDeviceId('query'), async (req, res) => {
         }
         
         if (Date.now() > row.auth_expires) {
-            await client.query('ROLLBACK');
+            // Clear auth state so a new auth can start
+            await client.query(
+                'UPDATE authentication SET auth_nonce = NULL, client_id = NULL WHERE device_id = $1',
+                [req.deviceId]
+            );
+            await client.query('COMMIT');
             return res.json({ success: false, status: 'timeout', error: 'Authentication expired' });
         }
         
@@ -594,7 +656,16 @@ app.post('/api/hub/temp', requireHubAuth, async (req, res) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Health check endpoint (useful for load balancers)
+app.get('/api/health', (req, res) => {
+    res.json({ success: true, ready: serverReady });
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`[Worker ${process.pid}] Server running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`[Worker ${process.pid}] Server running on port ${PORT}`);
+    // Run startup cleanup after server is listening
+    clearStaleAuthStates();
+});
 
 } // end startServer()
