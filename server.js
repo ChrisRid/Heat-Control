@@ -96,9 +96,9 @@ const sendError = (res, status, message, extra = {}) => {
     res.status(status).json({ success: false, error: message, ...extra });
 };
 
-const auditLog = (event, deviceId, details = {}) => {
+const auditLog = (event, hubId, details = {}) => {
     const timestamp = new Date().toISOString();
-    console.log(JSON.stringify({ timestamp, event, deviceId, ...details }));
+    console.log(JSON.stringify({ timestamp, event, hubId, ...details }));
 };
 
 const hash = (str) => crypto.createHash('sha256').update(str).digest('hex');
@@ -184,24 +184,24 @@ app.use((req, res, next) => {
 // Validation
 // =============================================================================
 
-const isValidDeviceId = (id) => typeof id === 'string' && /^[a-z0-9]{32}$/.test(id);
+const isValidHubId = (id) => typeof id === 'string' && /^[a-z0-9]{32}$/.test(id);
 
-const getDeviceId = (req, source) => {
+const getHubId = (req, source) => {
     switch (source) {
         case 'params': return req.params.id;
-        case 'query': return req.query.id || req.query.deviceId;
-        case 'body': return req.body.deviceId;
-        case 'auto': return req.body.deviceId || req.query.deviceId || req.params.id;
+        case 'query': return req.query.id || req.query.hubId;
+        case 'body': return req.body.hubId;
+        case 'auto': return req.body.hubId || req.query.hubId || req.params.id;
         default: return null;
     }
 };
 
-const validateDeviceId = (source = 'params') => (req, res, next) => {
-    const id = getDeviceId(req, source);
-    if (!isValidDeviceId(id)) {
-        return sendError(res, 400, 'Invalid device ID');
+const validateHubId = (source = 'params') => (req, res, next) => {
+    const id = getHubId(req, source);
+    if (!isValidHubId(id)) {
+        return sendError(res, 400, 'Invalid hub ID');
     }
-    req.deviceId = id;
+    req.hubId = id;
     next();
 };
 
@@ -249,52 +249,52 @@ const blockIp = (ip) => {
     authBlocks.set(ip, Date.now() + AUTH_BLOCK_DURATION);
 };
 
-const verifyHubSignature = async (deviceId, timestamp, signature) => {
+const verifyHubSignature = async (hubId, timestamp, signature) => {
     const now = Date.now();
     const ts = parseInt(timestamp, 10);
     if (isNaN(ts) || Math.abs(now - ts) > TIMESTAMP_WINDOW_MS) return false;
     
     try {
         const result = await pool.query(
-            'SELECT auth_public_key FROM authentication WHERE device_id = $1',
-            [deviceId]
+            'SELECT auth_public_key FROM authentication WHERE hub_id = $1',
+            [hubId]
         );
         if (result.rows.length === 0) return false;
         
         const formattedKey = formatPEM(result.rows[0].auth_public_key);
-        const message = deviceId + timestamp;
+        const message = hubId + timestamp;
         const verify = crypto.createVerify('RSA-SHA256');
         verify.update(message);
         return verify.verify(formattedKey, signature, 'base64');
     } catch (err) {
-        auditLog('signature_verify_error', deviceId, { error: err.message });
+        auditLog('signature_verify_error', hubId, { error: err.message });
         return false;
     }
 };
 
 // =============================================================================
-// Hub Authentication Middleware
+// Hub Authentication Middleware (for ESP32 hub requests)
 // =============================================================================
 
 const requireHubAuth = async (req, res, next) => {
-    const deviceId = getDeviceId(req, 'auto');
+    const hubId = getHubId(req, 'auto');
     const timestamp = req.body.timestamp || req.query.timestamp;
     const signature = req.body.signature || req.query.signature;
     
-    if (!isValidDeviceId(deviceId)) {
-        return sendError(res, 400, 'Invalid device ID');
+    if (!isValidHubId(hubId)) {
+        return sendError(res, 400, 'Invalid hub ID');
     }
     if (!timestamp || !signature) {
         return sendError(res, 401, 'Missing authentication');
     }
     
-    const valid = await verifyHubSignature(deviceId, timestamp, signature);
+    const valid = await verifyHubSignature(hubId, timestamp, signature);
     if (!valid) {
-        auditLog('hub_auth_failed', deviceId);
+        auditLog('hub_auth_failed', hubId);
         return sendError(res, 401, 'Invalid signature');
     }
     
-    req.deviceId = deviceId;
+    req.hubId = hubId;
     next();
 };
 
@@ -330,8 +330,8 @@ const requireServerReady = (req, res, next) => {
 // Cookie Helper
 // =============================================================================
 
-const setSessionCookie = (res, deviceId, token) => {
-    res.cookie(`auth_${deviceId}`, JSON.stringify({ device_id: deviceId, token }), {
+const setSessionCookie = (res, hubId, token) => {
+    res.cookie(`auth_${hubId}`, JSON.stringify({ hub_id: hubId, token }), {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         maxAge: COOKIE_MAX_AGE_MS,
@@ -340,30 +340,30 @@ const setSessionCookie = (res, deviceId, token) => {
 };
 
 // =============================================================================
-// Session Authentication Middleware
+// Session Authentication Middleware (for client device requests)
 // =============================================================================
 
 const requireAuth = async (req, res, next) => {
-    const deviceId = req.params.id;
-    if (!isValidDeviceId(deviceId)) {
-        return sendError(res, 400, 'Invalid device ID');
+    const hubId = req.params.id;
+    if (!isValidHubId(hubId)) {
+        return sendError(res, 400, 'Invalid hub ID');
     }
     
-    const cookie = req.cookies[`auth_${deviceId}`];
+    const cookie = req.cookies[`auth_${hubId}`];
     if (!cookie) {
         return sendError(res, 401, 'Not authenticated', { needsAuth: true });
     }
     
     try {
-        const { device_id, token } = JSON.parse(cookie);
-        if (device_id !== deviceId) {
+        const { hub_id, token } = JSON.parse(cookie);
+        if (hub_id !== hubId) {
             return sendError(res, 401, 'Invalid auth', { needsAuth: true });
         }
         
         const tokenHash = hash(token);
         const result = await pool.query(
-            'SELECT id FROM sessions WHERE device_id = $1 AND token_hash = $2',
-            [deviceId, tokenHash]
+            'SELECT index FROM sessions WHERE hub_id = $1 AND token_hash = $2',
+            [hubId, tokenHash]
         );
         
         if (result.rows.length === 0) {
@@ -373,37 +373,37 @@ const requireAuth = async (req, res, next) => {
         // Update last_used_at and refresh cookie (rolling 6-month expiry)
         const now = Date.now();
         await pool.query(
-            'UPDATE sessions SET last_used_at = $1 WHERE id = $2',
-            [now, result.rows[0].id]
+            'UPDATE sessions SET last_used_at = $1 WHERE index = $2',
+            [now, result.rows[0].index]
         );
-        setSessionCookie(res, deviceId, token);
+        setSessionCookie(res, hubId, token);
         
-        req.deviceId = deviceId;
-        req.sessionId = result.rows[0].id;
+        req.hubId = hubId;
+        req.sessionIndex = result.rows[0].index;
         req.tokenHash = tokenHash;
         next();
     } catch (err) {
-        auditLog('auth_middleware_error', deviceId, { error: err.message });
+        auditLog('auth_middleware_error', hubId, { error: err.message });
         sendError(res, 401, 'Auth error', { needsAuth: true });
     }
 };
 
 // =============================================================================
-// Auth Endpoints
+// Auth Endpoints (for client devices authenticating to a hub)
 // =============================================================================
 
-app.get('/api/auth/check', validateDeviceId('query'), async (req, res) => {
-    const cookie = req.cookies[`auth_${req.deviceId}`];
+app.get('/api/auth/check', validateHubId('query'), async (req, res) => {
+    const cookie = req.cookies[`auth_${req.hubId}`];
     if (!cookie) return res.json({ success: true, authenticated: false });
     
     try {
-        const { device_id, token } = JSON.parse(cookie);
-        if (device_id !== req.deviceId) return res.json({ success: true, authenticated: false });
+        const { hub_id, token } = JSON.parse(cookie);
+        if (hub_id !== req.hubId) return res.json({ success: true, authenticated: false });
         
         const tokenHash = hash(token);
         const result = await pool.query(
-            'SELECT id FROM sessions WHERE device_id = $1 AND token_hash = $2',
-            [req.deviceId, tokenHash]
+            'SELECT index FROM sessions WHERE hub_id = $1 AND token_hash = $2',
+            [req.hubId, tokenHash]
         );
         
         if (result.rows.length === 0) {
@@ -413,14 +413,14 @@ app.get('/api/auth/check', validateDeviceId('query'), async (req, res) => {
         // Update last_used_at and refresh cookie (rolling 6-month expiry)
         const now = Date.now();
         await pool.query(
-            'UPDATE sessions SET last_used_at = $1 WHERE id = $2',
-            [now, result.rows[0].id]
+            'UPDATE sessions SET last_used_at = $1 WHERE index = $2',
+            [now, result.rows[0].index]
         );
-        setSessionCookie(res, req.deviceId, token);
+        setSessionCookie(res, req.hubId, token);
         
         res.json({ success: true, authenticated: true });
     } catch (err) {
-        auditLog('auth_check_error', req.deviceId, { error: err.message });
+        auditLog('auth_check_error', req.hubId, { error: err.message });
         res.json({ success: true, authenticated: false });
     }
 });
@@ -430,9 +430,9 @@ app.post('/api/auth/start', requireServerReady, async (req, res) => {
         return sendError(res, 429, 'Too many attempts');
     }
     
-    const { deviceId } = req.body;
-    if (!isValidDeviceId(deviceId)) {
-        return sendError(res, 400, 'Invalid device ID');
+    const { hubId } = req.body;
+    if (!isValidHubId(hubId)) {
+        return sendError(res, 400, 'Invalid hub ID');
     }
     
     const client = await pool.connect();
@@ -441,20 +441,20 @@ app.post('/api/auth/start', requireServerReady, async (req, res) => {
         await client.query('BEGIN');
         
         const checkResult = await client.query(
-            'SELECT client_id, auth_expires FROM authentication WHERE device_id = $1 FOR UPDATE',
-            [deviceId]
+            'SELECT client_id, auth_expires FROM authentication WHERE hub_id = $1 FOR UPDATE',
+            [hubId]
         );
         
         if (checkResult.rows.length === 0) {
             await client.query('ROLLBACK');
-            return sendError(res, 404, 'Device not found');
+            return sendError(res, 404, 'Hub not found');
         }
         
         const row = checkResult.rows[0];
         
         if (row.client_id && row.auth_expires && Date.now() < row.auth_expires) {
             await client.query('ROLLBACK');
-            auditLog('auth_conflict', deviceId);
+            auditLog('auth_conflict', hubId);
             return sendError(res, 409, 'Authentication already in progress');
         }
         
@@ -464,24 +464,24 @@ app.post('/api/auth/start', requireServerReady, async (req, res) => {
         
         await client.query(
             `UPDATE authentication SET auth_nonce = $1, auth_expires = $2, client_id = $3
-             WHERE device_id = $4`,
-            [nonce, expires, clientId, deviceId]
+             WHERE hub_id = $4`,
+            [nonce, expires, clientId, hubId]
         );
         
         await client.query('COMMIT');
         
-        auditLog('auth_started', deviceId);
+        auditLog('auth_started', hubId);
         res.json({ success: true, clientId });
     } catch (err) {
         await client.query('ROLLBACK');
-        auditLog('auth_start_error', deviceId, { error: err.message });
+        auditLog('auth_start_error', hubId, { error: err.message });
         sendError(res, 500, 'Server error');
     } finally {
         client.release();
     }
 });
 
-app.get('/api/auth/poll', requireServerReady, validateDeviceId('query'), async (req, res) => {
+app.get('/api/auth/poll', requireServerReady, validateHubId('query'), async (req, res) => {
     const { clientId } = req.query;
     const client = await pool.connect();
     
@@ -489,12 +489,12 @@ app.get('/api/auth/poll', requireServerReady, validateDeviceId('query'), async (
         await client.query('BEGIN');
         
         const result = await client.query(
-            'SELECT auth_nonce, auth_expires, client_id FROM authentication WHERE device_id = $1 FOR UPDATE',
-            [req.deviceId]
+            'SELECT auth_nonce, auth_expires, client_id FROM authentication WHERE hub_id = $1 FOR UPDATE',
+            [req.hubId]
         );
         if (result.rows.length === 0) {
             await client.query('ROLLBACK');
-            return sendError(res, 404, 'Device not found', { status: 'error' });
+            return sendError(res, 404, 'Hub not found', { status: 'error' });
         }
         
         const row = result.rows[0];
@@ -505,33 +505,33 @@ app.get('/api/auth/poll', requireServerReady, validateDeviceId('query'), async (
         
         if (Date.now() > row.auth_expires) {
             await client.query(
-                'UPDATE authentication SET auth_nonce = NULL, client_id = NULL WHERE device_id = $1',
-                [req.deviceId]
+                'UPDATE authentication SET auth_nonce = NULL, client_id = NULL WHERE hub_id = $1',
+                [req.hubId]
             );
             await client.query('COMMIT');
             return res.json({ success: false, status: 'timeout', error: 'Authentication expired' });
         }
         
         if (row.auth_nonce === null) {
-            // Auth successful - create new session
+            // Auth successful - create new session for this client device
             const token = randomHex(32);
             const tokenHash = hash(token);
             const now = Date.now();
             
             await client.query(
-                'INSERT INTO sessions (device_id, token_hash, created_at, last_used_at) VALUES ($1, $2, $3, $3)',
-                [req.deviceId, tokenHash, now]
+                'INSERT INTO sessions (hub_id, token_hash, created_at, last_used_at) VALUES ($1, $2, $3, $3)',
+                [req.hubId, tokenHash, now]
             );
             
             await client.query(
-                'UPDATE authentication SET client_id = NULL WHERE device_id = $1',
-                [req.deviceId]
+                'UPDATE authentication SET client_id = NULL WHERE hub_id = $1',
+                [req.hubId]
             );
             
             await client.query('COMMIT');
             
-            setSessionCookie(res, req.deviceId, token);
-            auditLog('auth_completed', req.deviceId);
+            setSessionCookie(res, req.hubId, token);
+            auditLog('auth_completed', req.hubId);
             return res.json({ success: true, status: 'authenticated' });
         }
         
@@ -539,7 +539,7 @@ app.get('/api/auth/poll', requireServerReady, validateDeviceId('query'), async (
         res.json({ success: true, status: 'pending' });
     } catch (err) {
         await client.query('ROLLBACK');
-        auditLog('auth_poll_error', req.deviceId, { error: err.message });
+        auditLog('auth_poll_error', req.hubId, { error: err.message });
         sendError(res, 500, 'Server error');
     } finally {
         client.release();
@@ -547,14 +547,14 @@ app.get('/api/auth/poll', requireServerReady, validateDeviceId('query'), async (
 });
 
 // =============================================================================
-// Hub Endpoints
+// Hub Endpoints (called by ESP32 hub)
 // =============================================================================
 
 app.get('/api/hub/nonce', requireHubAuth, async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT auth_nonce, auth_expires FROM authentication WHERE device_id = $1',
-            [req.deviceId]
+            'SELECT auth_nonce, auth_expires FROM authentication WHERE hub_id = $1',
+            [req.hubId]
         );
         if (result.rows.length === 0 || !result.rows[0].auth_nonce) {
             return sendError(res, 404, 'No pending auth');
@@ -564,12 +564,12 @@ app.get('/api/hub/nonce', requireHubAuth, async (req, res) => {
         }
         res.json({ success: true, nonce: result.rows[0].auth_nonce });
     } catch (err) {
-        auditLog('nonce_fetch_error', req.deviceId, { error: err.message });
+        auditLog('nonce_fetch_error', req.hubId, { error: err.message });
         sendError(res, 500, 'Server error');
     }
 });
 
-app.post('/api/hub/auth', validateDeviceId('body'), async (req, res) => {
+app.post('/api/hub/auth', validateHubId('body'), async (req, res) => {
     const { signature } = req.body;
     
     if (isBlocked(req.ip)) {
@@ -578,23 +578,23 @@ app.post('/api/hub/auth', validateDeviceId('body'), async (req, res) => {
     
     try {
         const result = await pool.query(
-            'SELECT auth_public_key, auth_nonce, auth_expires FROM authentication WHERE device_id = $1',
-            [req.deviceId]
+            'SELECT auth_public_key, auth_nonce, auth_expires FROM authentication WHERE hub_id = $1',
+            [req.hubId]
         );
         if (result.rows.length === 0) {
-            auditLog('auth_device_not_found', req.deviceId);
-            return sendError(res, 404, 'Device not found');
+            auditLog('auth_hub_not_found', req.hubId);
+            return sendError(res, 404, 'Hub not found');
         }
         
         const { auth_public_key, auth_nonce, auth_expires } = result.rows[0];
         
         if (!auth_nonce || Date.now() > auth_expires) {
-            auditLog('auth_expired', req.deviceId);
+            auditLog('auth_expired', req.hubId);
             return sendError(res, 410, 'Auth expired');
         }
         
         const formattedKey = formatPEM(auth_public_key);
-        const message = auth_nonce + req.deviceId;
+        const message = auth_nonce + req.hubId;
         const verify = crypto.createVerify('RSA-SHA256');
         verify.update(message);
         
@@ -606,20 +606,20 @@ app.post('/api/hub/auth', validateDeviceId('body'), async (req, res) => {
         }
         
         if (!valid) {
-            auditLog('auth_invalid_signature', req.deviceId);
+            auditLog('auth_invalid_signature', req.hubId);
             blockIp(req.ip);
             return sendError(res, 401, 'Invalid signature');
         }
         
         await pool.query(
-            'UPDATE authentication SET auth_nonce = NULL WHERE device_id = $1',
-            [req.deviceId]
+            'UPDATE authentication SET auth_nonce = NULL WHERE hub_id = $1',
+            [req.hubId]
         );
         
-        auditLog('hub_auth_success', req.deviceId);
+        auditLog('hub_auth_success', req.hubId);
         res.json({ success: true });
     } catch (err) {
-        auditLog('hub_auth_error', req.deviceId, { error: err.message });
+        auditLog('hub_auth_error', req.hubId, { error: err.message });
         sendError(res, 500, 'Server error');
     }
 });
@@ -627,15 +627,15 @@ app.post('/api/hub/auth', validateDeviceId('body'), async (req, res) => {
 app.get('/api/hub/state', requireHubAuth, async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT set_temp, mode, boost, program FROM devices WHERE device_id = $1',
-            [req.deviceId]
+            'SELECT set_temp, mode, boost, program FROM hubs WHERE hub_id = $1',
+            [req.hubId]
         );
         if (result.rows.length === 0) {
-            return sendError(res, 404, 'Device not found');
+            return sendError(res, 404, 'Hub not found');
         }
         res.json({ success: true, ...result.rows[0] });
     } catch (err) {
-        auditLog('hub_state_error', req.deviceId, { error: err.message });
+        auditLog('hub_state_error', req.hubId, { error: err.message });
         sendError(res, 500, 'Server error');
     }
 });
@@ -649,37 +649,37 @@ app.post('/api/hub/temp', requireHubAuth, async (req, res) => {
     
     try {
         await pool.query(
-            'UPDATE devices SET current_temp = $1 WHERE device_id = $2',
-            [validated, req.deviceId]
+            'UPDATE hubs SET current_temp = $1 WHERE hub_id = $2',
+            [validated, req.hubId]
         );
         res.json({ success: true });
     } catch (err) {
-        auditLog('hub_temp_error', req.deviceId, { error: err.message });
+        auditLog('hub_temp_error', req.hubId, { error: err.message });
         sendError(res, 500, 'Server error');
     }
 });
 
 // =============================================================================
-// Device Endpoints
+// Hub Control Endpoints (called by authenticated client devices)
 // =============================================================================
 
-app.get('/api/device/:id', requireAuth, async (req, res) => {
+app.get('/api/hub/:id', requireAuth, async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT current_temp, set_temp, mode, boost, program FROM devices WHERE device_id = $1',
-            [req.deviceId]
+            'SELECT current_temp, set_temp, mode, boost, program FROM hubs WHERE hub_id = $1',
+            [req.hubId]
         );
         if (result.rows.length === 0) {
-            return sendError(res, 404, 'Device not found');
+            return sendError(res, 404, 'Hub not found');
         }
         res.json({ success: true, ...result.rows[0] });
     } catch (err) {
-        auditLog('device_get_error', req.deviceId, { error: err.message });
+        auditLog('hub_get_error', req.hubId, { error: err.message });
         sendError(res, 500, 'Server error');
     }
 });
 
-app.patch('/api/device/:id', requireAuth, async (req, res) => {
+app.patch('/api/hub/:id', requireAuth, async (req, res) => {
     const { set_temp, mode, boost, program } = req.body;
     const updates = [];
     const values = [];
@@ -712,54 +712,54 @@ app.patch('/api/device/:id', requireAuth, async (req, res) => {
     
     if (updates.length === 0) return res.json({ success: true });
     
-    values.push(req.deviceId);
+    values.push(req.hubId);
     
     try {
         await pool.query(
-            `UPDATE devices SET ${updates.join(', ')} WHERE device_id = $${idx}`,
+            `UPDATE hubs SET ${updates.join(', ')} WHERE hub_id = $${idx}`,
             values
         );
         res.json({ success: true });
     } catch (err) {
-        auditLog('device_update_error', req.deviceId, { error: err.message });
+        auditLog('hub_update_error', req.hubId, { error: err.message });
         sendError(res, 500, 'Server error');
     }
 });
 
 // =============================================================================
-// Session Management Endpoints
+// Session Management Endpoints (for client devices)
 // =============================================================================
 
-// Get session count for a device (requires auth)
-app.get('/api/device/:id/sessions', requireAuth, async (req, res) => {
+// Get session count for a hub (requires auth)
+app.get('/api/hub/:id/sessions', requireAuth, async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT COUNT(*) as count FROM sessions WHERE device_id = $1',
-            [req.deviceId]
+            'SELECT COUNT(*) as count FROM sessions WHERE hub_id = $1',
+            [req.hubId]
         );
         res.json({ success: true, count: parseInt(result.rows[0].count, 10) });
     } catch (err) {
-        auditLog('session_count_error', req.deviceId, { error: err.message });
+        auditLog('session_count_error', req.hubId, { error: err.message });
         sendError(res, 500, 'Server error');
     }
 });
 
-// Revoke all sessions for a device (requires auth)
-app.delete('/api/device/:id/sessions', requireAuth, async (req, res) => {
+// Revoke all sessions for a hub (requires auth)
+app.delete('/api/hub/:id/sessions', requireAuth, async (req, res) => {
     try {
         const result = await pool.query(
-            'DELETE FROM sessions WHERE device_id = $1',
-            [req.deviceId]
+            'DELETE FROM sessions WHERE hub_id = $1',
+            [req.hubId]
         );
         
-        auditLog('sessions_revoked', req.deviceId, { count: result.rowCount });
+        auditLog('sessions_revoked', req.hubId, { count: result.rowCount });
         
-        // Clear the cookie for this user
-        res.clearCookie(`auth_${req.deviceId}`);
+        // Clear the cookie for this client device
+        res.clearCookie(`auth_${req.hubId}`);
         
         res.json({ success: true, revoked: result.rowCount });
     } catch (err) {
-        auditLog('session_revoke_error', req.deviceId, { error: err.message });
+        auditLog('session_revoke_error', req.hubId, { error: err.message });
         sendError(res, 500, 'Server error');
     }
 });
