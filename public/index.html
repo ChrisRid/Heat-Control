@@ -147,6 +147,7 @@ const TEMP_MIN = 10, TEMP_MAX = 30;
 const POLL_INTERVAL_MS = 5000;
 const AUTH_POLL_INTERVAL_MS = 1000;
 const AUTH_TIMEOUT_MS = 61000;
+const SERVER_STARTING_RETRY_MS = 2000;
 
 // Theme management
 function getCookie(name) {
@@ -261,6 +262,25 @@ async function startAuth() {
         
         if (!res.ok) {
             const data = await res.json();
+            
+            // Handle specific error codes
+            if (res.status === 409) {
+                throw new Error('Another device is already authenticating. Please wait up to 60 seconds and try again.');
+            }
+            if (res.status === 425) {
+                // Server is starting up, auto-retry after a short delay
+                authTitle.textContent = 'Please Wait';
+                authMsg.textContent = 'Server is starting up...';
+                authIcon.innerHTML = '<div class="loading-emoji">⏳</div>';
+                authBtn.classList.add('hidden');
+                
+                setTimeout(() => {
+                    resetAuth();
+                    startAuth();
+                }, SERVER_STARTING_RETRY_MS);
+                return;
+            }
+            
             throw new Error(data.error || 'Failed to start auth');
         }
         
