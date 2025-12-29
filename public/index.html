@@ -199,7 +199,7 @@ function toggleTheme() {
     const isLight = document.body.classList.toggle('light-mode');
     setCookie('theme', isLight ? 'light' : 'dark');
     updateThemeIcon();
-    if (state.mode === 1) {
+    if (state.heatingProgramActive) {
         drawTimeline();
     }
 }
@@ -227,7 +227,7 @@ function getHubId() {
 }
 
 let hubId = getHubId();
-let state = { cur: null, tar: 21, mode: 0, boost: 0, program: '' };
+let state = { cur: null, tar: 21, heatingProgramActive: false, boostSetting: 0, heatingProgram: '' };
 let selectedDay = 0;
 let schedule = [[],[],[],[],[],[],[]];
 let pollTimer = null;
@@ -384,9 +384,9 @@ async function fetchState() {
         const d = await res.json();
         
         if (!('set_temp' in pendingChanges)) state.tar = d.set_temp;
-        if (!('mode' in pendingChanges)) state.mode = d.mode;
-        if (!('boost' in pendingChanges)) state.boost = d.boost;
-        if (!('program' in pendingChanges)) decodeProgram(d.program);
+        if (!('heating_program_active' in pendingChanges)) state.heatingProgramActive = d.heating_program_active;
+        if (!('boost_setting' in pendingChanges)) state.boostSetting = d.boost_setting;
+        if (!('heating_program' in pendingChanges)) decodeProgram(d.heating_program);
         state.cur = d.current_temp;
         
         render();
@@ -480,14 +480,14 @@ function render() {
     heat.classList.toggle('on', state.cur !== null && state.cur < state.tar);
     
     document.querySelectorAll('[data-boost]').forEach(b => {
-        b.classList.toggle('active', parseInt(b.dataset.boost) === state.boost);
+        b.classList.toggle('active', parseInt(b.dataset.boost) === state.boostSetting);
     });
     
-    $('modeManual').classList.toggle('active', state.mode === 0);
-    $('modeProgram').classList.toggle('active', state.mode === 1);
-    $('programPanel').classList.toggle('hidden', state.mode === 0);
+    $('modeManual').classList.toggle('active', !state.heatingProgramActive);
+    $('modeProgram').classList.toggle('active', state.heatingProgramActive);
+    $('programPanel').classList.toggle('hidden', !state.heatingProgramActive);
     
-    if (state.mode === 1 && dragging === null) {
+    if (state.heatingProgramActive && dragging === null) {
         requestAnimationFrame(() => { resizeCanvas(); drawTimeline(); });
     }
 }
@@ -501,12 +501,12 @@ $('inc').onclick = () => {
 };
 
 document.querySelectorAll('[data-boost]').forEach(b => {
-    b.onclick = () => { state.boost = parseInt(b.dataset.boost); render(); save({ boost: state.boost }); };
+    b.onclick = () => { state.boostSetting = parseInt(b.dataset.boost); render(); save({ boost_setting: state.boostSetting }); };
 });
 
-$('modeManual').onclick = () => { state.mode = 0; state.boost = 0; render(); save({ mode: 0, boost: 0 }); };
+$('modeManual').onclick = () => { state.heatingProgramActive = false; state.boostSetting = 0; render(); save({ heating_program_active: false, boost_setting: 0 }); };
 
-$('modeProgram').onclick = () => { state.mode = 1; render(); save({ mode: 1 }); };
+$('modeProgram').onclick = () => { state.heatingProgramActive = true; render(); save({ heating_program_active: true }); };
 
 function initDays() {
     const c = $('days');
@@ -672,7 +672,7 @@ canvas.onmousedown = e => {
         schedule[selectedDay].splice(i, 1);
         dragging = null;
         drawTimeline();
-        save({ program: encodeProgram() });
+        save({ heating_program: encodeProgram() });
     } else if (e.button === 0) {
         if (i !== -1) {
             dragging = i;
@@ -681,7 +681,7 @@ canvas.onmousedown = e => {
             schedule[selectedDay].push({ hour: Math.round(xToHour(p.x)), temp: Math.round(yToTemp(p.y)) });
         }
         canvas.style.cursor = 'grabbing';
-        pendingChanges.program = true;
+        pendingChanges.heating_program = true;
         drawTimeline();
     }
 };
@@ -702,7 +702,7 @@ canvas.onmouseup = () => {
         canvas.style.cursor = 'crosshair';
         cleanupSchedule(selectedDay);
         drawTimeline();
-        save({ program: encodeProgram() });
+        save({ heating_program: encodeProgram() });
     }
 };
 
@@ -712,7 +712,7 @@ canvas.onmouseleave = () => {
         canvas.style.cursor = 'crosshair';
         cleanupSchedule(selectedDay);
         drawTimeline();
-        save({ program: encodeProgram() });
+        save({ heating_program: encodeProgram() });
     }
 };
 
@@ -730,14 +730,14 @@ canvas.ontouchstart = e => {
             schedule[selectedDay].splice(i, 1);
             dragging = null;
             drawTimeline();
-            save({ program: encodeProgram() });
+            save({ heating_program: encodeProgram() });
         }, 500);
         dragging = i;
-        pendingChanges.program = true;
+        pendingChanges.heating_program = true;
     } else {
         schedule[selectedDay].push({ hour: Math.round(xToHour(p.x)), temp: Math.round(yToTemp(p.y)) });
         drawTimeline();
-        save({ program: encodeProgram() });
+        save({ heating_program: encodeProgram() });
     }
 };
 
@@ -757,26 +757,26 @@ canvas.ontouchend = () => {
         dragging = null;
         cleanupSchedule(selectedDay);
         drawTimeline();
-        save({ program: encodeProgram() });
+        save({ heating_program: encodeProgram() });
     }
 };
 
 canvas.oncontextmenu = e => e.preventDefault();
-window.onresize = () => { if (state.mode === 1) { resizeCanvas(); drawTimeline(); } };
+window.onresize = () => { if (state.heatingProgramActive) { resizeCanvas(); drawTimeline(); } };
 
 $('copyPrev').onclick = () => {
     schedule[selectedDay] = schedule[selectedDay === 0 ? 6 : selectedDay - 1].map(p => ({...p}));
     drawTimeline();
-    save({ program: encodeProgram() });
+    save({ heating_program: encodeProgram() });
 };
 
 $('copyNext').onclick = () => {
     schedule[selectedDay] = schedule[selectedDay === 6 ? 0 : selectedDay + 1].map(p => ({...p}));
     drawTimeline();
-    save({ program: encodeProgram() });
+    save({ heating_program: encodeProgram() });
 };
 
-$('clearDay').onclick = () => { schedule[selectedDay] = []; drawTimeline(); save({ program: encodeProgram() }); };
+$('clearDay').onclick = () => { schedule[selectedDay] = []; drawTimeline(); save({ heating_program: encodeProgram() }); };
 </script>
 </body>
 </html>
