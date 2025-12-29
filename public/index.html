@@ -15,7 +15,7 @@
             --timeline-bg: #08090a; --timeline-grid: rgba(255,255,255,0.05); --timeline-text: #ffffff;
         }
         .light-mode {
-            --bg: #f0f2f5; --bg2: #ffffff; --bg3: #f8f9fa;
+            --bg2: #ffffff; --bg3: #f8f9fa;
             --border: #e0e0e0; --text: #1a1a1a; --text2: rgba(0,0,0,0.55); --text3: rgba(0,0,0,0.75);
             --accent: #00a88a; --accent-glow: rgba(0,168,138,0.15);
             --danger: #e53e3e;
@@ -95,7 +95,7 @@
 
     <div class="hidden" id="main">
         <div class="card">
-            <button class="theme-toggle" id="themeToggle" title="Toggle light/dark mode">&#x1F319;</button>
+            <button class="theme-toggle" id="themeToggle" title="Toggle light/dark mode">&#x2600;</button>
             <div class="heat" id="heat">&#x1F525;</div>
             <div class="label">Current Temperature</div>
             <div class="current"><span id="cur">--</span><span>&deg;C</span></div>
@@ -181,7 +181,8 @@ function updateThemeIcon() {
     const toggle = document.getElementById('themeToggle');
     if (toggle) {
         const isLight = document.body.classList.contains('light-mode');
-        toggle.innerHTML = isLight ? '&#x2600;' : '&#x1F319;'; // Sun or Moon
+        // Show icon for what you'll switch TO (moon = click for dark, sun = click for light)
+        toggle.innerHTML = isLight ? '&#x1F319;' : '&#x2600;'; // Moon or Sun
         toggle.title = isLight ? 'Switch to dark mode' : 'Switch to light mode';
     }
 }
