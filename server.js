@@ -70,7 +70,6 @@ const pool = new Pool({
 // =============================================================================
 
 const TEMP_MIN = 10, TEMP_MAX = 30;
-const VALID_MODES = [0, 1];
 const VALID_BOOSTS = [0, 1, 2, 3];
 const PROGRAM_PATTERN = /^[A-U]{168}$/;
 const TIMESTAMP_WINDOW_MS = 120000;
@@ -210,12 +209,14 @@ const validateSetTemp = (temp) => {
     return !isNaN(t) && t >= TEMP_MIN && t <= TEMP_MAX ? t : null;
 };
 
-const validateMode = (mode) => {
-    const m = parseInt(mode, 10);
-    return VALID_MODES.includes(m) ? m : null;
+const validateBoolean = (val) => {
+    if (typeof val === 'boolean') return val;
+    if (val === 'true' || val === 1) return true;
+    if (val === 'false' || val === 0) return false;
+    return null;
 };
 
-const validateBoost = (boost) => {
+const validateBoostSetting = (boost) => {
     const b = parseInt(boost, 10);
     return VALID_BOOSTS.includes(b) ? b : null;
 };
@@ -627,7 +628,8 @@ app.post('/api/hub/auth', validateHubId('body'), async (req, res) => {
 app.get('/api/hub/state', requireHubAuth, async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT set_temp, mode, boost, program FROM hubs WHERE hub_id = $1',
+            `SELECT set_temp, boost_setting, heating_program, heating_program_active 
+             FROM hubs WHERE hub_id = $1`,
             [req.hubId]
         );
         if (result.rows.length === 0) {
@@ -666,7 +668,8 @@ app.post('/api/hub/temp', requireHubAuth, async (req, res) => {
 app.get('/api/hub/:id', requireAuth, async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT current_temp, set_temp, mode, boost, program FROM hubs WHERE hub_id = $1',
+            `SELECT current_temp, set_temp, boost_setting, heating_program, heating_program_active 
+             FROM hubs WHERE hub_id = $1`,
             [req.hubId]
         );
         if (result.rows.length === 0) {
@@ -680,7 +683,7 @@ app.get('/api/hub/:id', requireAuth, async (req, res) => {
 });
 
 app.patch('/api/hub/:id', requireAuth, async (req, res) => {
-    const { set_temp, mode, boost, program } = req.body;
+    const { set_temp, boost_setting, heating_program, heating_program_active } = req.body;
     const updates = [];
     const values = [];
     let idx = 1;
@@ -691,22 +694,22 @@ app.patch('/api/hub/:id', requireAuth, async (req, res) => {
         updates.push(`set_temp = $${idx++}`);
         values.push(validated);
     }
-    if (mode !== undefined) {
-        const validated = validateMode(mode);
-        if (validated === null) return sendError(res, 400, 'Invalid mode (must be 0 or 1)');
-        updates.push(`mode = $${idx++}`);
+    if (boost_setting !== undefined) {
+        const validated = validateBoostSetting(boost_setting);
+        if (validated === null) return sendError(res, 400, 'Invalid boost_setting (must be 0-3)');
+        updates.push(`boost_setting = $${idx++}`);
         values.push(validated);
     }
-    if (boost !== undefined) {
-        const validated = validateBoost(boost);
-        if (validated === null) return sendError(res, 400, 'Invalid boost (must be 0-3)');
-        updates.push(`boost = $${idx++}`);
+    if (heating_program !== undefined) {
+        const validated = validateProgram(heating_program);
+        if (validated === null) return sendError(res, 400, 'Invalid heating_program format');
+        updates.push(`heating_program = $${idx++}`);
         values.push(validated);
     }
-    if (program !== undefined) {
-        const validated = validateProgram(program);
-        if (validated === null) return sendError(res, 400, 'Invalid program format');
-        updates.push(`program = $${idx++}`);
+    if (heating_program_active !== undefined) {
+        const validated = validateBoolean(heating_program_active);
+        if (validated === null) return sendError(res, 400, 'Invalid heating_program_active (must be boolean)');
+        updates.push(`heating_program_active = $${idx++}`);
         values.push(validated);
     }
     
