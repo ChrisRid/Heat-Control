@@ -83,6 +83,19 @@
         .sync.show { opacity: 1; }
         .sync.ok { border-color: var(--accent); color: var(--accent); }
         .sync.err { border-color: var(--danger); color: var(--danger); }
+        
+        .session-info { font-size: 11px; color: var(--text2); margin-top: 16px; text-align: center; }
+        .session-info a { color: var(--text2); text-decoration: underline; cursor: pointer; }
+        .session-info a:hover { color: var(--text); }
+        
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        .modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 16px; padding: 24px; max-width: 320px; text-align: center; }
+        .modal h3 { font-size: 18px; font-weight: 500; margin-bottom: 12px; }
+        .modal p { font-size: 13px; color: var(--text2); margin-bottom: 20px; line-height: 1.5; }
+        .modal-btns { display: flex; gap: 12px; justify-content: center; }
+        .modal-btn { padding: 10px 20px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg3); color: var(--text); font-size: 13px; cursor: pointer; transition: all 0.2s; }
+        .modal-btn.danger { border-color: rgba(255,107,107,0.5); background: rgba(255,107,107,0.15); color: var(--danger); }
+        .modal-btn:hover { opacity: 0.8; }
     </style>
 </head>
 <body>
@@ -137,7 +150,20 @@
             </div>
         </div>
         
+        <div class="session-info" id="sessionInfo"></div>
+        
         <div class="sync" id="sync">Saved</div>
+    </div>
+    
+    <div class="modal-overlay hidden" id="revokeModal">
+        <div class="modal">
+            <h3>Revoke All Access</h3>
+            <p>This will log out all devices, including this one. Everyone will need to re-authenticate using the hub button.</p>
+            <div class="modal-btns">
+                <button class="modal-btn" id="revokeCancel">Cancel</button>
+                <button class="modal-btn danger" id="revokeConfirm">Revoke All</button>
+            </div>
+        </div>
     </div>
 
 <script>
@@ -173,7 +199,6 @@ function toggleTheme() {
     const isLight = document.body.classList.toggle('light-mode');
     setCookie('theme', isLight ? 'light' : 'dark');
     updateThemeIcon();
-    // Redraw timeline if visible (uses theme colors)
     if (state.mode === 1) {
         drawTimeline();
     }
@@ -183,13 +208,11 @@ function updateThemeIcon() {
     const toggle = document.getElementById('themeToggle');
     if (toggle) {
         const isLight = document.body.classList.contains('light-mode');
-        // Show icon for what you'll switch TO (moon = click for dark, sun = click for light)
-        toggle.innerHTML = isLight ? '&#x1F319;' : '&#x2600;'; // Moon or Sun
+        toggle.innerHTML = isLight ? '&#x1F319;' : '&#x2600;';
         toggle.title = isLight ? 'Switch to dark mode' : 'Switch to light mode';
     }
 }
 
-// Initialize theme immediately (before DOM fully loads to prevent flash)
 initTheme();
 
 function createDebouncer(delayMs) {
@@ -210,6 +233,7 @@ let schedule = [[],[],[],[],[],[],[]];
 let pollTimer = null;
 let dragging = null;
 let pendingChanges = {};
+let sessionCount = 0;
 
 const debouncedSave = createDebouncer(500);
 
@@ -218,13 +242,16 @@ const auth = $('auth'), main = $('main'), authIcon = $('authIcon'), authTitle = 
 const authMsg = $('authMsg'), authBtn = $('authBtn'), authErr = $('authErr');
 const heat = $('heat'), cur = $('cur'), tar = $('tar'), sync = $('sync');
 const canvas = $('canvas'), ctx = canvas.getContext('2d');
+const sessionInfo = $('sessionInfo'), revokeModal = $('revokeModal');
 
-// Theme toggle event listener
 document.addEventListener('DOMContentLoaded', () => {
     const themeToggle = $('themeToggle');
     if (themeToggle) {
         themeToggle.onclick = toggleTheme;
     }
+    
+    $('revokeCancel').onclick = () => revokeModal.classList.add('hidden');
+    $('revokeConfirm').onclick = revokeAllSessions;
 });
 
 if (!deviceId) {
@@ -263,12 +290,10 @@ async function startAuth() {
         if (!res.ok) {
             const data = await res.json();
             
-            // Handle specific error codes
             if (res.status === 409) {
-                throw new Error('Another device is already authenticating. Please wait a minute and try again.');
+                throw new Error('Another device is already authenticating. Please wait up to 60 seconds and try again.');
             }
             if (res.status === 425) {
-                // Server is starting up, auto-retry after a short delay
                 authTitle.textContent = 'Please Wait';
                 authMsg.textContent = 'Server is starting up...';
                 authIcon.innerHTML = '<div class="loading-emoji">⏳</div>';
@@ -286,10 +311,10 @@ async function startAuth() {
         
         const { clientId } = await res.json();
         
-        authTitle.textContent = 'Security Check...';
-        authMsg.textContent = 'Press the connect button on your hub now.';
+        authTitle.textContent = 'Waiting...';
+        authMsg.textContent = 'Press the auth button on your hub now.';
         authBtn.classList.add('hidden');
-        authIcon.innerHTML = '<div class="loading-emoji">👇</div>';
+        authIcon.innerHTML = '<div class="loading-emoji">⏳</div>';
         
         const start = Date.now();
         const poll = setInterval(async () => {
@@ -341,7 +366,11 @@ function showMain() {
     main.classList.remove('hidden');
     initDays();
     fetchState();
-    pollTimer = setInterval(fetchState, POLL_INTERVAL_MS);
+    fetchSessionCount();
+    pollTimer = setInterval(() => {
+        fetchState();
+        fetchSessionCount();
+    }, POLL_INTERVAL_MS);
 }
 
 async function fetchState() {
@@ -363,6 +392,46 @@ async function fetchState() {
         render();
     } catch (err) {
         console.error('[fetchState]', err);
+    }
+}
+
+async function fetchSessionCount() {
+    try {
+        const res = await fetch(`${API}/device/${deviceId}/sessions`, { credentials: 'include' });
+        if (!res.ok) return;
+        const data = await res.json();
+        sessionCount = data.count || 0;
+        updateSessionInfo();
+    } catch (err) {
+        console.error('[fetchSessionCount]', err);
+    }
+}
+
+function updateSessionInfo() {
+    const deviceWord = sessionCount === 1 ? 'device' : 'devices';
+    sessionInfo.innerHTML = `There ${sessionCount === 1 ? 'is' : 'are'} currently <strong>${sessionCount}</strong> ${deviceWord} authorised on your hub. <a id="revokeLink">Revoke all access</a>`;
+    $('revokeLink').onclick = () => revokeModal.classList.remove('hidden');
+}
+
+async function revokeAllSessions() {
+    revokeModal.classList.add('hidden');
+    
+    try {
+        const res = await fetch(`${API}/device/${deviceId}/sessions`, {
+            method: 'DELETE',
+            credentials: 'include'
+        });
+        
+        if (res.ok) {
+            // Reload page - user will need to re-auth
+            location.reload();
+        } else {
+            const data = await res.json();
+            alert(data.error || 'Failed to revoke sessions');
+        }
+    } catch (err) {
+        console.error('[revokeAllSessions]', err);
+        alert('Failed to revoke sessions');
     }
 }
 
@@ -531,7 +600,6 @@ function drawTimeline() {
     const a = getArea();
     const h = canvas.offsetHeight;
     
-    // Get theme-aware colors
     const gridColor = getComputedColor('--timeline-grid');
     const textColor = getComputedColor('--timeline-text');
     const lineColor = getComputedColor('--blue');
