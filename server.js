@@ -5,8 +5,6 @@ const os = require('os');
 // Clustering - Use all available CPU cores
 // =============================================================================
 
-// Use NUM_CLUSTER_WORKERS env var, fallback to CPU count
-// Note: os.cpus().length returns HOST CPUs in containers, not allocated vCPUs
 const numCPUs = parseInt(process.env.NUM_CLUSTER_WORKERS, 10) || os.cpus().length;
 
 if (cluster.isPrimary) {
@@ -18,7 +16,6 @@ if (cluster.isPrimary) {
         console.log(`[Primary] Worker ${workerId} ${event}. Active workers: ${activeWorkers}/${numCPUs}`);
     };
     
-    // Fork workers for each CPU
     for (let i = 0; i < numCPUs; i++) {
         cluster.fork();
     }
@@ -31,14 +28,11 @@ if (cluster.isPrimary) {
     cluster.on('exit', (worker, code, signal) => {
         activeWorkers--;
         logWorkerCount(`exited (${signal || code})`, worker.process.pid);
-        
-        // Restart dead workers
         console.log(`[Primary] Starting replacement worker...`);
         cluster.fork();
     });
     
 } else {
-    // Worker process - run the Express server
     startServer();
 }
 
@@ -52,11 +46,9 @@ const path = require('path');
 
 const app = express();
 
-// #6 - Request body size limit (1kb is plenty for this API)
 app.use(express.json({ limit: '1kb' }));
 app.use(cookieParser());
 
-// #7 - Security headers
 app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -66,56 +58,92 @@ app.use((req, res, next) => {
     next();
 });
 
-// PostgreSQL pool - configurable per worker
-// Total connections = DB_CONNECTIONS_PER_WORKER × WEB_CONCURRENCY (e.g., 3 × 8 = 24)
-// Check your Railway Postgres tier's connection limit
 const pool = new Pool({ 
     connectionString: process.env.DATABASE_URL,
     max: parseInt(process.env.DB_CONNECTIONS_PER_WORKER, 10) || 5,
-    idleTimeoutMillis: 30000,  // Close idle connections after 30s
-    connectionTimeoutMillis: 5000  // Fail fast if can't connect in 5s
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000
 });
 
-// #5 - Validation constants
+// =============================================================================
+// Constants
+// =============================================================================
+
 const TEMP_MIN = 10, TEMP_MAX = 30;
 const VALID_MODES = [0, 1];
 const VALID_BOOSTS = [0, 1, 2, 3];
-const PROGRAM_LENGTH = 168;
-const PROGRAM_PATTERN = /^[A-U]{168}$/; // A=10°C to U=30°C
-
-// #8 - Timestamp window (2 minutes)
+const PROGRAM_PATTERN = /^[A-U]{168}$/;
 const TIMESTAMP_WINDOW_MS = 120000;
 
-// Server readiness flag - prevents auth requests until startup cleanup completes
+// Cookie expiry: 6 months (refreshed on each use for rolling expiry)
+const COOKIE_MAX_AGE_MS = 180 * 24 * 60 * 60 * 1000;
+
+// Session cleanup: remove sessions unused for 6 months
+const SESSION_EXPIRY_MS = 180 * 24 * 60 * 60 * 1000;
+
+// Server readiness flag
 let serverReady = false;
 
-// Standardized error response
+// Track last session cleanup time (run hourly, not every 30 seconds)
+let lastSessionCleanup = 0;
+const SESSION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+// =============================================================================
+// Utility Functions
+// =============================================================================
+
 const sendError = (res, status, message, extra = {}) => {
     res.status(status).json({ success: false, error: message, ...extra });
 };
 
-// Audit logger
 const auditLog = (event, deviceId, details = {}) => {
     const timestamp = new Date().toISOString();
     console.log(JSON.stringify({ timestamp, event, deviceId, ...details }));
 };
 
-// Rate limiter (100/min max, 5/sec regen, 1min memory)
+const hash = (str) => crypto.createHash('sha256').update(str).digest('hex');
+const randomHex = (bytes) => crypto.randomBytes(bytes).toString('hex');
+
+// =============================================================================
+// Rate Limiting
+// =============================================================================
+
 const rateLimits = new Map();
 const RATE_MAX = 100, RATE_REGEN = 5, RATE_WINDOW = 60000;
 
-// #13 - Brute force protection (10 second block after failed auth)
 const authBlocks = new Map();
 const AUTH_BLOCK_DURATION = 10000;
 
-// #25 - Cleanup every 30 seconds
-setInterval(() => {
+// Cleanup every 30 seconds (rate limits + auth blocks)
+// Session cleanup runs hourly within this interval
+setInterval(async () => {
     const now = Date.now();
+    
+    // Clean up rate limits
     for (const [key, data] of rateLimits) {
         if (now - data.lastSeen > RATE_WINDOW) rateLimits.delete(key);
     }
+    
+    // Clean up auth blocks
     for (const [key, blockUntil] of authBlocks) {
         if (now > blockUntil) authBlocks.delete(key);
+    }
+    
+    // Clean up expired sessions (hourly)
+    if (now - lastSessionCleanup > SESSION_CLEANUP_INTERVAL_MS) {
+        lastSessionCleanup = now;
+        try {
+            const cutoff = now - SESSION_EXPIRY_MS;
+            const result = await pool.query(
+                'DELETE FROM sessions WHERE last_used_at < $1',
+                [cutoff]
+            );
+            if (result.rowCount > 0) {
+                auditLog('session_cleanup', null, { removed: result.rowCount });
+            }
+        } catch (err) {
+            console.error('[Session cleanup error]', err.message);
+        }
     }
 }, 30000);
 
@@ -152,7 +180,10 @@ app.use((req, res, next) => {
     sendError(res, 403, 'HTTPS required');
 });
 
-// #22 - Single device ID validation function
+// =============================================================================
+// Validation
+// =============================================================================
+
 const isValidDeviceId = (id) => typeof id === 'string' && /^[a-z0-9]{32}$/.test(id);
 
 const getDeviceId = (req, source) => {
@@ -174,7 +205,6 @@ const validateDeviceId = (source = 'params') => (req, res, next) => {
     next();
 };
 
-// #5 - Input validators
 const validateSetTemp = (temp) => {
     const t = parseInt(temp, 10);
     return !isNaN(t) && t >= TEMP_MIN && t <= TEMP_MAX ? t : null;
@@ -196,10 +226,13 @@ const validateProgram = (program) => {
 
 const validateTemp = (temp) => {
     const t = parseInt(temp, 10);
-    return !isNaN(t) && t >= -40 && t <= 60 ? t : null; // Reasonable sensor range
+    return !isNaN(t) && t >= -40 && t <= 60 ? t : null;
 };
 
-// Reformat PEM key
+// =============================================================================
+// Crypto Helpers
+// =============================================================================
+
 const formatPEM = (key) => {
     const b64 = key.replace(/-----BEGIN [^-]+-----/, '')
                    .replace(/-----END [^-]+-----/, '')
@@ -207,11 +240,6 @@ const formatPEM = (key) => {
     return '-----BEGIN PUBLIC KEY-----\n' + b64.match(/.{1,64}/g).join('\n') + '\n-----END PUBLIC KEY-----';
 };
 
-// Utility functions
-const hash = (str) => crypto.createHash('sha256').update(str).digest('hex');
-const randomHex = (bytes) => crypto.randomBytes(bytes).toString('hex');
-
-// #13 - Check if IP is blocked
 const isBlocked = (ip) => {
     const blockUntil = authBlocks.get(ip);
     return blockUntil && Date.now() < blockUntil;
@@ -221,7 +249,6 @@ const blockIp = (ip) => {
     authBlocks.set(ip, Date.now() + AUTH_BLOCK_DURATION);
 };
 
-// #8 - Verify hub signature with 2 minute window
 const verifyHubSignature = async (deviceId, timestamp, signature) => {
     const now = Date.now();
     const ts = parseInt(timestamp, 10);
@@ -245,7 +272,10 @@ const verifyHubSignature = async (deviceId, timestamp, signature) => {
     }
 };
 
-// #22 - Unified hub authentication middleware
+// =============================================================================
+// Hub Authentication Middleware
+// =============================================================================
+
 const requireHubAuth = async (req, res, next) => {
     const deviceId = getDeviceId(req, 'auto');
     const timestamp = req.body.timestamp || req.query.timestamp;
@@ -268,7 +298,10 @@ const requireHubAuth = async (req, res, next) => {
     next();
 };
 
-// Startup cleanup - clear any stale auth states from previous server instance
+// =============================================================================
+// Startup Cleanup
+// =============================================================================
+
 const clearStaleAuthStates = async () => {
     try {
         const result = await pool.query(
@@ -282,20 +315,83 @@ const clearStaleAuthStates = async () => {
         serverReady = true;
     } catch (err) {
         console.error(`[Worker ${process.pid}] Startup cleanup failed:`, err.message);
-        // Retry after a short delay
         setTimeout(clearStaleAuthStates, 1000);
     }
 };
 
-// Middleware to check server readiness for auth endpoints
 const requireServerReady = (req, res, next) => {
     if (!serverReady) {
-        return sendError(res, 425, 'Not ready - Server starting');
+        return sendError(res, 425, 'Server starting up, please retry shortly');
     }
     next();
 };
 
-// #23 - Standardized auth check response
+// =============================================================================
+// Cookie Helper
+// =============================================================================
+
+const setSessionCookie = (res, deviceId, token) => {
+    res.cookie(`auth_${deviceId}`, JSON.stringify({ device_id: deviceId, token }), {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: COOKIE_MAX_AGE_MS,
+        sameSite: 'strict'
+    });
+};
+
+// =============================================================================
+// Session Authentication Middleware
+// =============================================================================
+
+const requireAuth = async (req, res, next) => {
+    const deviceId = req.params.id;
+    if (!isValidDeviceId(deviceId)) {
+        return sendError(res, 400, 'Invalid device ID');
+    }
+    
+    const cookie = req.cookies[`auth_${deviceId}`];
+    if (!cookie) {
+        return sendError(res, 401, 'Not authenticated', { needsAuth: true });
+    }
+    
+    try {
+        const { device_id, token } = JSON.parse(cookie);
+        if (device_id !== deviceId) {
+            return sendError(res, 401, 'Invalid auth', { needsAuth: true });
+        }
+        
+        const tokenHash = hash(token);
+        const result = await pool.query(
+            'SELECT id FROM sessions WHERE device_id = $1 AND token_hash = $2',
+            [deviceId, tokenHash]
+        );
+        
+        if (result.rows.length === 0) {
+            return sendError(res, 401, 'Invalid token', { needsAuth: true });
+        }
+        
+        // Update last_used_at and refresh cookie (rolling 6-month expiry)
+        const now = Date.now();
+        await pool.query(
+            'UPDATE sessions SET last_used_at = $1 WHERE id = $2',
+            [now, result.rows[0].id]
+        );
+        setSessionCookie(res, deviceId, token);
+        
+        req.deviceId = deviceId;
+        req.sessionId = result.rows[0].id;
+        req.tokenHash = tokenHash;
+        next();
+    } catch (err) {
+        auditLog('auth_middleware_error', deviceId, { error: err.message });
+        sendError(res, 401, 'Auth error', { needsAuth: true });
+    }
+};
+
+// =============================================================================
+// Auth Endpoints
+// =============================================================================
+
 app.get('/api/auth/check', validateDeviceId('query'), async (req, res) => {
     const cookie = req.cookies[`auth_${req.deviceId}`];
     if (!cookie) return res.json({ success: true, authenticated: false });
@@ -304,23 +400,32 @@ app.get('/api/auth/check', validateDeviceId('query'), async (req, res) => {
         const { device_id, token } = JSON.parse(cookie);
         if (device_id !== req.deviceId) return res.json({ success: true, authenticated: false });
         
+        const tokenHash = hash(token);
         const result = await pool.query(
-            'SELECT auth_cookie_token_hash FROM authentication WHERE device_id = $1',
-            [req.deviceId]
+            'SELECT id FROM sessions WHERE device_id = $1 AND token_hash = $2',
+            [req.deviceId, tokenHash]
         );
-        if (result.rows.length === 0) return res.json({ success: true, authenticated: false });
         
-        const authenticated = result.rows[0].auth_cookie_token_hash === hash(token);
-        res.json({ success: true, authenticated });
+        if (result.rows.length === 0) {
+            return res.json({ success: true, authenticated: false });
+        }
+        
+        // Update last_used_at and refresh cookie (rolling 6-month expiry)
+        const now = Date.now();
+        await pool.query(
+            'UPDATE sessions SET last_used_at = $1 WHERE id = $2',
+            [now, result.rows[0].id]
+        );
+        setSessionCookie(res, req.deviceId, token);
+        
+        res.json({ success: true, authenticated: true });
     } catch (err) {
         auditLog('auth_check_error', req.deviceId, { error: err.message });
         res.json({ success: true, authenticated: false });
     }
 });
 
-// #13 - Start auth flow with brute force protection and conflict detection
 app.post('/api/auth/start', requireServerReady, async (req, res) => {
-    // Check for brute force block
     if (isBlocked(req.ip)) {
         return sendError(res, 429, 'Too many attempts');
     }
@@ -335,7 +440,6 @@ app.post('/api/auth/start', requireServerReady, async (req, res) => {
     try {
         await client.query('BEGIN');
         
-        // Check if device exists and if there's an active auth in progress
         const checkResult = await client.query(
             'SELECT client_id, auth_expires FROM authentication WHERE device_id = $1 FOR UPDATE',
             [deviceId]
@@ -348,11 +452,10 @@ app.post('/api/auth/start', requireServerReady, async (req, res) => {
         
         const row = checkResult.rows[0];
         
-        // If there's an active (non-expired) auth in progress, reject
         if (row.client_id && row.auth_expires && Date.now() < row.auth_expires) {
             await client.query('ROLLBACK');
             auditLog('auth_conflict', deviceId);
-            return sendError(res, 409, 'Conflict - Authentication already in progress');
+            return sendError(res, 409, 'Authentication already in progress');
         }
         
         const nonce = randomHex(16);
@@ -378,7 +481,6 @@ app.post('/api/auth/start', requireServerReady, async (req, res) => {
     }
 });
 
-// #23 - Poll auth status with standardized responses
 app.get('/api/auth/poll', requireServerReady, validateDeviceId('query'), async (req, res) => {
     const { clientId } = req.query;
     const client = await pool.connect();
@@ -402,7 +504,6 @@ app.get('/api/auth/poll', requireServerReady, validateDeviceId('query'), async (
         }
         
         if (Date.now() > row.auth_expires) {
-            // Clear auth state so a new auth can start
             await client.query(
                 'UPDATE authentication SET auth_nonce = NULL, client_id = NULL WHERE device_id = $1',
                 [req.deviceId]
@@ -412,19 +513,24 @@ app.get('/api/auth/poll', requireServerReady, validateDeviceId('query'), async (
         }
         
         if (row.auth_nonce === null) {
+            // Auth successful - create new session
             const token = randomHex(32);
+            const tokenHash = hash(token);
+            const now = Date.now();
+            
             await client.query(
-                'UPDATE authentication SET auth_cookie_token_hash = $1, client_id = NULL WHERE device_id = $2',
-                [hash(token), req.deviceId]
+                'INSERT INTO sessions (device_id, token_hash, created_at, last_used_at) VALUES ($1, $2, $3, $3)',
+                [req.deviceId, tokenHash, now]
             );
+            
+            await client.query(
+                'UPDATE authentication SET client_id = NULL WHERE device_id = $1',
+                [req.deviceId]
+            );
+            
             await client.query('COMMIT');
             
-            res.cookie(`auth_${req.deviceId}`, JSON.stringify({ device_id: req.deviceId, token }), {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                maxAge: 365 * 24 * 60 * 60 * 1000,
-                sameSite: 'strict'
-            });
+            setSessionCookie(res, req.deviceId, token);
             auditLog('auth_completed', req.deviceId);
             return res.json({ success: true, status: 'authenticated' });
         }
@@ -440,7 +546,10 @@ app.get('/api/auth/poll', requireServerReady, validateDeviceId('query'), async (
     }
 });
 
-// Hub: Get nonce for signing (requires hub signature)
+// =============================================================================
+// Hub Endpoints
+// =============================================================================
+
 app.get('/api/hub/nonce', requireHubAuth, async (req, res) => {
     try {
         const result = await pool.query(
@@ -460,11 +569,9 @@ app.get('/api/hub/nonce', requireHubAuth, async (req, res) => {
     }
 });
 
-// #13 - Hub: Submit signed auth with brute force protection
 app.post('/api/hub/auth', validateDeviceId('body'), async (req, res) => {
     const { signature } = req.body;
     
-    // Check for brute force block
     if (isBlocked(req.ip)) {
         return sendError(res, 429, 'Too many attempts');
     }
@@ -500,7 +607,7 @@ app.post('/api/hub/auth', validateDeviceId('body'), async (req, res) => {
         
         if (!valid) {
             auditLog('auth_invalid_signature', req.deviceId);
-            blockIp(req.ip); // #13 - Block IP on failed auth
+            blockIp(req.ip);
             return sendError(res, 401, 'Invalid signature');
         }
         
@@ -517,41 +624,45 @@ app.post('/api/hub/auth', validateDeviceId('body'), async (req, res) => {
     }
 });
 
-// Middleware to verify auth cookie for device endpoints
-const requireAuth = async (req, res, next) => {
-    const deviceId = req.params.id;
-    if (!isValidDeviceId(deviceId)) {
-        return sendError(res, 400, 'Invalid device ID');
+app.get('/api/hub/state', requireHubAuth, async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT set_temp, mode, boost, program FROM devices WHERE device_id = $1',
+            [req.deviceId]
+        );
+        if (result.rows.length === 0) {
+            return sendError(res, 404, 'Device not found');
+        }
+        res.json({ success: true, ...result.rows[0] });
+    } catch (err) {
+        auditLog('hub_state_error', req.deviceId, { error: err.message });
+        sendError(res, 500, 'Server error');
     }
-    
-    const cookie = req.cookies[`auth_${deviceId}`];
-    if (!cookie) {
-        return sendError(res, 401, 'Not authenticated', { needsAuth: true });
+});
+
+app.post('/api/hub/temp', requireHubAuth, async (req, res) => {
+    const { temp } = req.body;
+    const validated = validateTemp(temp);
+    if (validated === null) {
+        return sendError(res, 400, 'Invalid temperature');
     }
     
     try {
-        const { device_id, token } = JSON.parse(cookie);
-        if (device_id !== deviceId) {
-            return sendError(res, 401, 'Invalid auth', { needsAuth: true });
-        }
-        
-        const result = await pool.query(
-            'SELECT auth_cookie_token_hash FROM authentication WHERE device_id = $1',
-            [deviceId]
+        await pool.query(
+            'UPDATE devices SET current_temp = $1 WHERE device_id = $2',
+            [validated, req.deviceId]
         );
-        if (result.rows.length === 0 || result.rows[0].auth_cookie_token_hash !== hash(token)) {
-            return sendError(res, 401, 'Invalid token', { needsAuth: true });
-        }
-        
-        req.deviceId = deviceId;
-        next();
+        res.json({ success: true });
     } catch (err) {
-        auditLog('auth_middleware_error', deviceId, { error: err.message });
-        sendError(res, 401, 'Auth error', { needsAuth: true });
+        auditLog('hub_temp_error', req.deviceId, { error: err.message });
+        sendError(res, 500, 'Server error');
     }
-};
+});
 
-// Get device state (client auth via cookie)
+// =============================================================================
+// Device Endpoints
+// =============================================================================
+
 app.get('/api/device/:id', requireAuth, async (req, res) => {
     try {
         const result = await pool.query(
@@ -568,14 +679,12 @@ app.get('/api/device/:id', requireAuth, async (req, res) => {
     }
 });
 
-// #5 - Update device state with input validation
 app.patch('/api/device/:id', requireAuth, async (req, res) => {
     const { set_temp, mode, boost, program } = req.body;
     const updates = [];
     const values = [];
     let idx = 1;
     
-    // Validate each field if provided
     if (set_temp !== undefined) {
         const validated = validateSetTemp(set_temp);
         if (validated === null) return sendError(res, 400, 'Invalid set_temp (must be 10-30)');
@@ -617,54 +726,61 @@ app.patch('/api/device/:id', requireAuth, async (req, res) => {
     }
 });
 
-// Hub: Get settings (requires hub signature)
-app.get('/api/hub/state', requireHubAuth, async (req, res) => {
+// =============================================================================
+// Session Management Endpoints
+// =============================================================================
+
+// Get session count for a device (requires auth)
+app.get('/api/device/:id/sessions', requireAuth, async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT set_temp, mode, boost, program FROM devices WHERE device_id = $1',
+            'SELECT COUNT(*) as count FROM sessions WHERE device_id = $1',
             [req.deviceId]
         );
-        if (result.rows.length === 0) {
-            return sendError(res, 404, 'Device not found');
-        }
-        res.json({ success: true, ...result.rows[0] });
+        res.json({ success: true, count: parseInt(result.rows[0].count, 10) });
     } catch (err) {
-        auditLog('hub_state_error', req.deviceId, { error: err.message });
+        auditLog('session_count_error', req.deviceId, { error: err.message });
         sendError(res, 500, 'Server error');
     }
 });
 
-// #5 - Hub: Report temperature with validation
-app.post('/api/hub/temp', requireHubAuth, async (req, res) => {
-    const { temp } = req.body;
-    const validated = validateTemp(temp);
-    if (validated === null) {
-        return sendError(res, 400, 'Invalid temperature');
-    }
-    
+// Revoke all sessions for a device (requires auth)
+app.delete('/api/device/:id/sessions', requireAuth, async (req, res) => {
     try {
-        await pool.query(
-            'UPDATE devices SET current_temp = $1 WHERE device_id = $2',
-            [validated, req.deviceId]
+        const result = await pool.query(
+            'DELETE FROM sessions WHERE device_id = $1',
+            [req.deviceId]
         );
-        res.json({ success: true });
+        
+        auditLog('sessions_revoked', req.deviceId, { count: result.rowCount });
+        
+        // Clear the cookie for this user
+        res.clearCookie(`auth_${req.deviceId}`);
+        
+        res.json({ success: true, revoked: result.rowCount });
     } catch (err) {
-        auditLog('hub_temp_error', req.deviceId, { error: err.message });
+        auditLog('session_revoke_error', req.deviceId, { error: err.message });
         sendError(res, 500, 'Server error');
     }
 });
+
+// =============================================================================
+// Static Files & Health Check
+// =============================================================================
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Health check endpoint (useful for load balancers)
 app.get('/api/health', (req, res) => {
     res.json({ success: true, ready: serverReady });
 });
 
+// =============================================================================
+// Start Server
+// =============================================================================
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`[Worker ${process.pid}] Server running on port ${PORT}`);
-    // Run startup cleanup after server is listening
     clearStaleAuthStates();
 });
 
