@@ -290,7 +290,7 @@ const clearStaleAuthStates = async () => {
 // Middleware to check server readiness for auth endpoints
 const requireServerReady = (req, res, next) => {
     if (!serverReady) {
-        return sendError(res, 425, 'Server starting up, please retry shortly');
+        return sendError(res, 425, 'Not ready - Server starting');
     }
     next();
 };
@@ -352,7 +352,7 @@ app.post('/api/auth/start', requireServerReady, async (req, res) => {
         if (row.client_id && row.auth_expires && Date.now() < row.auth_expires) {
             await client.query('ROLLBACK');
             auditLog('auth_conflict', deviceId);
-            return sendError(res, 409, 'Authentication already in progress');
+            return sendError(res, 409, 'Conflict - Authentication already in progress');
         }
         
         const nonce = randomHex(16);
