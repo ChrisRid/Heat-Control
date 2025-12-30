@@ -96,6 +96,14 @@
         .modal-btn { padding: 10px 20px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg3); color: var(--text); font-size: 13px; cursor: pointer; transition: all 0.2s; }
         .modal-btn.danger { border-color: rgba(255,107,107,0.5); background: rgba(255,107,107,0.15); color: var(--danger); }
         .modal-btn:hover { opacity: 0.8; }
+        
+        .modal-help { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+        .modal-help-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text2); cursor: pointer; }
+        .modal-help-toggle:hover { color: var(--text); }
+        .modal-help-icon { width: 14px; height: 14px; border-radius: 50%; border: 1px solid currentColor; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 600; flex-shrink: 0; }
+        .modal-help-content { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+        .modal-help-content.expanded { max-height: 300px; }
+        .modal-help-text { font-size: 11px; color: var(--text2); line-height: 1.6; margin-top: 10px; padding: 10px; background: var(--bg3); border-radius: 6px; text-align: left; }
     </style>
 </head>
 <body>
@@ -157,11 +165,22 @@
     
     <div class="modal-overlay hidden" id="revokeModal">
         <div class="modal">
-            <h3>Revoke All Access</h3>
-            <p>This will log out all devices, including this one. Everyone will need to re-authenticate using the hub button.</p>
+            <h3>Revoke Access</h3>
+            <p>This will log out all devices, including this one. Everyone will need to re-authenticate by scanning the QR code and pressing then pressing connect button on the hub.</p>
             <div class="modal-btns">
                 <button class="modal-btn" id="revokeCancel">Cancel</button>
                 <button class="modal-btn danger" id="revokeConfirm">Revoke All</button>
+            </div>
+            <div class="modal-help">
+                <div class="modal-help-toggle" id="helpToggle">
+                    <span class="modal-help-icon">?</span>
+                    <span>Why am I seeing more devices than expected?</span>
+                </div>
+                <div class="modal-help-content" id="helpContent">
+                    <div class="modal-help-text">
+                        The device count shows how many times the authorisation process has been completed successfully. To protect your privacy, no personal data is stored and instead, a unique cookie identifies each session. If you clear your cookies and re-authorise, it counts as a new device. If the count seems too high, simply revoke all access and re-authorise your devices.
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -243,6 +262,7 @@ const authMsg = $('authMsg'), authBtn = $('authBtn'), authErr = $('authErr');
 const heat = $('heat'), cur = $('cur'), tar = $('tar'), sync = $('sync');
 const canvas = $('canvas'), ctx = canvas.getContext('2d');
 const sessionInfo = $('sessionInfo'), revokeModal = $('revokeModal');
+const helpToggle = $('helpToggle'), helpContent = $('helpContent');
 
 document.addEventListener('DOMContentLoaded', () => {
     const themeToggle = $('themeToggle');
@@ -250,8 +270,15 @@ document.addEventListener('DOMContentLoaded', () => {
         themeToggle.onclick = toggleTheme;
     }
     
-    $('revokeCancel').onclick = () => revokeModal.classList.add('hidden');
+    $('revokeCancel').onclick = () => {
+        revokeModal.classList.add('hidden');
+        helpContent.classList.remove('expanded');
+    };
     $('revokeConfirm').onclick = revokeAllSessions;
+    
+    helpToggle.onclick = () => {
+        helpContent.classList.toggle('expanded');
+    };
 });
 
 if (!hubId) {
@@ -415,6 +442,7 @@ function updateSessionInfo() {
 
 async function revokeAllSessions() {
     revokeModal.classList.add('hidden');
+    helpContent.classList.remove('expanded');
     
     try {
         const res = await fetch(`${API}/hub/${hubId}/sessions`, {
