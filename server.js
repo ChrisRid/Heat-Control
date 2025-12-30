@@ -628,7 +628,8 @@ app.post('/api/hub/auth', validateHubId('body'), async (req, res) => {
 app.get('/api/hub/state', requireHubAuth, async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT set_temp, boost_setting, heating_program, heating_program_active 
+            `SELECT set_temp, boost_setting, heating_program, heating_program_active,
+                    hot_water_program, hot_water_program_active
              FROM hubs WHERE hub_id = $1`,
             [req.hubId]
         );
@@ -668,7 +669,8 @@ app.post('/api/hub/temp', requireHubAuth, async (req, res) => {
 app.get('/api/hub/:id', requireAuth, async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT current_temp, set_temp, boost_setting, heating_program, heating_program_active 
+            `SELECT current_temp, set_temp, boost_setting, heating_program, heating_program_active,
+                    hot_water_program, hot_water_program_active
              FROM hubs WHERE hub_id = $1`,
             [req.hubId]
         );
@@ -683,7 +685,8 @@ app.get('/api/hub/:id', requireAuth, async (req, res) => {
 });
 
 app.patch('/api/hub/:id', requireAuth, async (req, res) => {
-    const { set_temp, boost_setting, heating_program, heating_program_active } = req.body;
+    const { set_temp, boost_setting, heating_program, heating_program_active,
+            hot_water_program, hot_water_program_active } = req.body;
     const updates = [];
     const values = [];
     let idx = 1;
@@ -710,6 +713,18 @@ app.patch('/api/hub/:id', requireAuth, async (req, res) => {
         const validated = validateBoolean(heating_program_active);
         if (validated === null) return sendError(res, 400, 'Invalid heating_program_active (must be boolean)');
         updates.push(`heating_program_active = $${idx++}`);
+        values.push(validated);
+    }
+    if (hot_water_program !== undefined) {
+        const validated = validateProgram(hot_water_program);
+        if (validated === null) return sendError(res, 400, 'Invalid hot_water_program format');
+        updates.push(`hot_water_program = $${idx++}`);
+        values.push(validated);
+    }
+    if (hot_water_program_active !== undefined) {
+        const validated = validateBoolean(hot_water_program_active);
+        if (validated === null) return sendError(res, 400, 'Invalid hot_water_program_active (must be boolean)');
+        updates.push(`hot_water_program_active = $${idx++}`);
         values.push(validated);
     }
     
