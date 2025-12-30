@@ -72,6 +72,7 @@ const pool = new Pool({
 const TEMP_MIN = 10, TEMP_MAX = 30;
 const VALID_BOOSTS = [0, 1, 2, 3];
 const PROGRAM_PATTERN = /^[A-U]{168}$/;
+const HOT_WATER_PROGRAM_PATTERN = /^[AB]{168}$/;  // A = off, B = on
 const TIMESTAMP_WINDOW_MS = 120000;
 
 // Cookie expiry: 6 months (refreshed on each use for rolling expiry)
@@ -223,6 +224,10 @@ const validateBoostSetting = (boost) => {
 
 const validateProgram = (program) => {
     return typeof program === 'string' && PROGRAM_PATTERN.test(program) ? program : null;
+};
+
+const validateHotWaterProgram = (program) => {
+    return typeof program === 'string' && HOT_WATER_PROGRAM_PATTERN.test(program) ? program : null;
 };
 
 const validateTemp = (temp) => {
@@ -716,8 +721,8 @@ app.patch('/api/hub/:id', requireAuth, async (req, res) => {
         values.push(validated);
     }
     if (hot_water_program !== undefined) {
-        const validated = validateProgram(hot_water_program);
-        if (validated === null) return sendError(res, 400, 'Invalid hot_water_program format');
+        const validated = validateHotWaterProgram(hot_water_program);
+        if (validated === null) return sendError(res, 400, 'Invalid hot_water_program format (must be 168 chars of A or B)');
         updates.push(`hot_water_program = $${idx++}`);
         values.push(validated);
     }
