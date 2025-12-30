@@ -56,7 +56,7 @@
         .label { font-size: 14px; text-transform: uppercase; letter-spacing: 2px; color: var(--text3); margin-bottom: 8px; font-weight: 500; }
         .current { font-size: 60px; font-weight: 200; margin-bottom: 30px; color: var(--text); line-height: 1; }
         .current span:last-child { font-size: 20px; vertical-align: top; opacity: 0.5; }
-        .target-row { display: flex; align-items: center; justify-content: center; gap: 24px; }
+        .target-row { display: flex; align-items: center; justify-content: center; gap: 10px; }
         .target { font-size: 36px; font-weight: 200; min-width: 110px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; line-height: 1; }
         .target span:last-child { font-size: 14px; color: var(--text3); vertical-align: top; }
         .btn { width: 50px; height: 50px; border-radius: 50%; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 26px; cursor: pointer; transition: all 0.2s; }
@@ -68,7 +68,7 @@
         .opt:disabled { opacity: 0.3; cursor: not-allowed; }
 
         .program { padding: 24px 5px; }
-        .program .label, .program .btn-group, .program .days, .program .timeline-help, .program .sched-btns, .program .clear-day-row { padding-left: 15px; padding-right: 15px; }
+        .program .label, .program .btn-group, .program .days, .program .timeline-help, .program .sched-btns, .program .clear-day-row { padding-left: 1px; padding-right: 1px; }
         .days { display: flex; gap: 4px; margin: 16px 0; flex-wrap: wrap; justify-content: center; }
         .day { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 10px; font-weight: 500; cursor: pointer; }
         .day.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
@@ -311,10 +311,10 @@ async function startAuth() {
         
         const { clientId } = await res.json();
         
-        authTitle.textContent = 'Waiting...';
-        authMsg.textContent = 'Press the auth button on your hub now.';
+        authTitle.textContent = 'Security Check';
+        authMsg.textContent = 'Press the connect button on your hub now...';
         authBtn.classList.add('hidden');
-        authIcon.innerHTML = '<div class="loading-emoji">⏳</div>';
+        authIcon.innerHTML = '<div class="loading-emoji">👇</div>';
         
         const start = Date.now();
         const poll = setInterval(async () => {
@@ -409,7 +409,7 @@ async function fetchSessionCount() {
 
 function updateSessionInfo() {
     const deviceWord = sessionCount === 1 ? 'device' : 'devices';
-    sessionInfo.innerHTML = `There ${sessionCount === 1 ? 'is' : 'are'} currently <strong>${sessionCount}</strong> ${deviceWord} authorised on your hub. <a id="revokeLink">Revoke all access</a>`;
+    sessionInfo.innerHTML = `There ${sessionCount === 1 ? 'is' : 'are'} currently <strong>${sessionCount}</strong> ${deviceWord} authorised on your hub.<br> <a id="revokeLink">Revoke all access<br></a>`;
     $('revokeLink').onclick = () => revokeModal.classList.remove('hidden');
 }
 
