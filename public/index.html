@@ -92,6 +92,7 @@
         .day { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--blue-border); background: var(--blue-glow); color: #c5e3ff; font-size: 10px; font-weight: 500; cursor: pointer; }
         .day.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
         .timeline { position: relative; height: 240px; background: var(--timeline-bg); border-radius: 12px; overflow: hidden; }
+        .timeline.short { height: 120px; }
         .timeline canvas { display: block; cursor: crosshair; width: 100%; height: 100%; }
         .timeline-help { font-size: 12px; color: var(--text3); margin-top: 8px; }
         .sched-btns { display: flex; gap: 6px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
@@ -187,7 +188,7 @@
             <div class="tab-content" id="hotWaterContent">
                 <div class="label">Weekly Program</div>
                 <div class="days" id="hotWaterDays"></div>
-                <div class="timeline"><canvas id="hotWaterCanvas"></canvas></div>
+                <div class="timeline short"><canvas id="hotWaterCanvas"></canvas></div>
                 <div class="timeline-help">Tap to add &bull; Drag to move &bull; Long-press to delete</div>
                 <div class="sched-btns">
                     <button class="sched-btn" id="hotWaterCopyPrev">Copy Previous Day</button>
@@ -234,6 +235,9 @@ const POLL_INTERVAL_MS = 5000;
 const AUTH_POLL_INTERVAL_MS = 1000;
 const AUTH_TIMEOUT_MS = 61000;
 const SERVER_STARTING_RETRY_MS = 2000;
+
+// Hot water uses binary on/off (0 = off, 1 = on)
+const HW_OFF = 0, HW_ON = 1;
 
 // Theme management
 function getCookie(name) {
@@ -664,8 +668,9 @@ function cleanupSchedule(programType, day) {
     const pts = schedules[programType][day].slice().sort((a, b) => a.hour - b.hour);
     if (pts.length <= 1) { schedules[programType][day] = pts; return; }
     const cleaned = [pts[0]];
+    const valueKey = programType === 'hotwater' ? 'state' : 'temp';
     for (let i = 1; i < pts.length; i++) {
-        if (pts[i].temp !== cleaned[cleaned.length - 1].temp) cleaned.push(pts[i]);
+        if (pts[i][valueKey] !== cleaned[cleaned.length - 1][valueKey]) cleaned.push(pts[i]);
     }
     schedules[programType][day] = cleaned;
 }
@@ -673,13 +678,30 @@ function cleanupSchedule(programType, day) {
 function decodeProgram(prog, programType) {
     schedules[programType] = [[],[],[],[],[],[],[]];
     if (!prog || prog.length !== 168) return;
-    for (let d = 0; d < 7; d++) {
-        let lastTemp = null;
-        for (let h = 0; h < 24; h++) {
-            const temp = prog.charCodeAt(d * 24 + h) - 65 + TEMP_MIN;
-            if (temp !== lastTemp) {
-                schedules[programType][d].push({ hour: h, temp: Math.max(TEMP_MIN, Math.min(TEMP_MAX, temp)) });
-                lastTemp = temp;
+    
+    if (programType === 'hotwater') {
+        // Hot water: A = off (0), B = on (1)
+        for (let d = 0; d < 7; d++) {
+            let lastState = null;
+            for (let h = 0; h < 24; h++) {
+                const char = prog.charAt(d * 24 + h);
+                const state = char === 'B' ? HW_ON : HW_OFF;
+                if (state !== lastState) {
+                    schedules[programType][d].push({ hour: h, state: state });
+                    lastState = state;
+                }
+            }
+        }
+    } else {
+        // Heating: A-U = 10-30°C
+        for (let d = 0; d < 7; d++) {
+            let lastTemp = null;
+            for (let h = 0; h < 24; h++) {
+                const temp = prog.charCodeAt(d * 24 + h) - 65 + TEMP_MIN;
+                if (temp !== lastTemp) {
+                    schedules[programType][d].push({ hour: h, temp: Math.max(TEMP_MIN, Math.min(TEMP_MAX, temp)) });
+                    lastTemp = temp;
+                }
             }
         }
     }
@@ -687,13 +709,28 @@ function decodeProgram(prog, programType) {
 
 function encodeProgram(programType) {
     let prog = '';
-    for (let d = 0; d < 7; d++) {
-        const pts = schedules[programType][d].slice().sort((a, b) => a.hour - b.hour);
-        let curTemp = pts.length > 0 ? pts[0].temp : 21;
-        let ptIdx = 0;
-        for (let h = 0; h < 24; h++) {
-            while (ptIdx < pts.length && pts[ptIdx].hour <= h) { curTemp = pts[ptIdx].temp; ptIdx++; }
-            prog += String.fromCharCode(Math.max(TEMP_MIN, Math.min(TEMP_MAX, curTemp)) - TEMP_MIN + 65);
+    
+    if (programType === 'hotwater') {
+        // Hot water: A = off, B = on
+        for (let d = 0; d < 7; d++) {
+            const pts = schedules[programType][d].slice().sort((a, b) => a.hour - b.hour);
+            let curState = pts.length > 0 ? pts[0].state : HW_OFF;
+            let ptIdx = 0;
+            for (let h = 0; h < 24; h++) {
+                while (ptIdx < pts.length && pts[ptIdx].hour <= h) { curState = pts[ptIdx].state; ptIdx++; }
+                prog += curState === HW_ON ? 'B' : 'A';
+            }
+        }
+    } else {
+        // Heating: A-U = 10-30°C
+        for (let d = 0; d < 7; d++) {
+            const pts = schedules[programType][d].slice().sort((a, b) => a.hour - b.hour);
+            let curTemp = pts.length > 0 ? pts[0].temp : 21;
+            let ptIdx = 0;
+            for (let h = 0; h < 24; h++) {
+                while (ptIdx < pts.length && pts[ptIdx].hour <= h) { curTemp = pts[ptIdx].temp; ptIdx++; }
+                prog += String.fromCharCode(Math.max(TEMP_MIN, Math.min(TEMP_MAX, curTemp)) - TEMP_MIN + 65);
+            }
         }
     }
     return prog;
@@ -735,6 +772,10 @@ function tempToY(t, programType) { const a = getArea(programType); return a.b - 
 function xToHour(x, programType) { const a = getArea(programType); return Math.max(0, Math.min(24, ((x - a.l) / (a.r - a.l)) * 24)); }
 function yToTemp(y, programType) { const a = getArea(programType); return Math.max(TEMP_MIN, Math.min(TEMP_MAX, TEMP_MIN + ((a.b - y) / (a.b - a.t)) * (TEMP_MAX - TEMP_MIN))); }
 
+// Hot water on/off Y conversions
+function stateToY(state, programType) { const a = getArea(programType); return state === HW_ON ? a.t + (a.b - a.t) * 0.2 : a.b - (a.b - a.t) * 0.2; }
+function yToState(y, programType) { const a = getArea(programType); const mid = (a.t + a.b) / 2; return y < mid ? HW_ON : HW_OFF; }
+
 function getComputedColor(varName) {
     return getComputedStyle(document.body).getPropertyValue(varName).trim();
 }
@@ -757,45 +798,116 @@ function drawTimeline(programType) {
     
     ctx.strokeStyle = gridColor;
     ctx.lineWidth = 1;
-    for (let hr = 0; hr <= 24; hr++) { ctx.beginPath(); ctx.moveTo(hourToX(hr, programType), a.t); ctx.lineTo(hourToX(hr, programType), a.b); ctx.stroke(); }
-    for (let t = TEMP_MIN; t <= TEMP_MAX; t++) { ctx.beginPath(); ctx.moveTo(a.l, tempToY(t, programType)); ctx.lineTo(a.r, tempToY(t, programType)); ctx.stroke(); }
     
-    ctx.fillStyle = textColor;
-    ctx.font = `bold ${Math.max(9, h * 0.04)}px ui-monospace, Menlo, Consolas, monospace`;
-    ctx.textAlign = 'center';
-    for (let hr = 0; hr <= 24; hr += 2) ctx.fillText(hr, hourToX(hr, programType), a.b + h * 0.06);
-    ctx.textAlign = 'right';
-    for (let t = TEMP_MIN; t <= TEMP_MAX; t += 2) ctx.fillText(t + '\u00B0', a.l - 4, tempToY(t, programType) + 3);
+    // Draw vertical grid lines (hours)
+    for (let hr = 0; hr <= 24; hr++) { 
+        ctx.beginPath(); 
+        ctx.moveTo(hourToX(hr, programType), a.t); 
+        ctx.lineTo(hourToX(hr, programType), a.b); 
+        ctx.stroke(); 
+    }
     
-    const pts = (schedules[programType][selectedDay] || []).slice().sort((a, b) => a.hour - b.hour);
-    if (pts.length > 0) {
-        ctx.strokeStyle = lineColor;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(hourToX(0, programType), tempToY(pts[0].temp, programType));
-        for (let i = 0; i < pts.length; i++) {
-            ctx.lineTo(hourToX(pts[i].hour, programType), tempToY(i === 0 ? pts[0].temp : pts[i-1].temp, programType));
-            ctx.lineTo(hourToX(pts[i].hour, programType), tempToY(pts[i].temp, programType));
+    if (programType === 'hotwater') {
+        // Hot water: Draw On/Off horizontal lines
+        const onY = stateToY(HW_ON, programType);
+        const offY = stateToY(HW_OFF, programType);
+        
+        ctx.beginPath(); ctx.moveTo(a.l, onY); ctx.lineTo(a.r, onY); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(a.l, offY); ctx.lineTo(a.r, offY); ctx.stroke();
+        
+        // Draw On/Off labels
+        ctx.fillStyle = textColor;
+        ctx.font = `bold ${Math.max(10, h * 0.12)}px ui-monospace, Menlo, Consolas, monospace`;
+        ctx.textAlign = 'right';
+        ctx.fillText('On', a.l - 6, onY + 4);
+        ctx.fillText('Off', a.l - 6, offY + 4);
+        
+        // Draw hour labels
+        ctx.font = `bold ${Math.max(9, h * 0.08)}px ui-monospace, Menlo, Consolas, monospace`;
+        ctx.textAlign = 'center';
+        for (let hr = 0; hr <= 24; hr += 2) ctx.fillText(hr, hourToX(hr, programType), a.b + h * 0.12);
+        
+        // Draw schedule
+        const pts = (schedules[programType][selectedDay] || []).slice().sort((a, b) => a.hour - b.hour);
+        if (pts.length > 0) {
+            ctx.strokeStyle = lineColor;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(hourToX(0, programType), stateToY(pts[0].state, programType));
+            for (let i = 0; i < pts.length; i++) {
+                const prevState = i === 0 ? pts[0].state : pts[i-1].state;
+                ctx.lineTo(hourToX(pts[i].hour, programType), stateToY(prevState, programType));
+                ctx.lineTo(hourToX(pts[i].hour, programType), stateToY(pts[i].state, programType));
+            }
+            ctx.lineTo(hourToX(24, programType), stateToY(pts[pts.length - 1].state, programType));
+            ctx.stroke();
+            
+            // Draw points
+            pts.forEach(p => {
+                const x = hourToX(p.hour, programType), y = stateToY(p.state, programType);
+                ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fillStyle = getComputedColor('--blue-glow'); ctx.fill();
+                ctx.strokeStyle = lineColor; ctx.lineWidth = 2; ctx.stroke();
+                ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fillStyle = '#5ba8e8'; ctx.fill();
+            });
+            
+            // Draw crosshairs when dragging
+            if (dragging !== null && schedules[programType][selectedDay][dragging]) {
+                const dp = schedules[programType][selectedDay][dragging];
+                const dx = hourToX(dp.hour, programType), dy = stateToY(dp.state, programType);
+                ctx.strokeStyle = 'rgba(128,128,128,0.4)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath(); ctx.moveTo(dx, a.t); ctx.lineTo(dx, a.b); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(a.l, dy); ctx.lineTo(a.r, dy); ctx.stroke();
+                ctx.setLineDash([]);
+            }
         }
-        ctx.lineTo(hourToX(24, programType), tempToY(pts[pts.length - 1].temp, programType));
-        ctx.stroke();
+    } else {
+        // Heating: Draw temperature grid
+        for (let t = TEMP_MIN; t <= TEMP_MAX; t++) { 
+            ctx.beginPath(); 
+            ctx.moveTo(a.l, tempToY(t, programType)); 
+            ctx.lineTo(a.r, tempToY(t, programType)); 
+            ctx.stroke(); 
+        }
         
-        pts.forEach(p => {
-            const x = hourToX(p.hour, programType), y = tempToY(p.temp, programType);
-            ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fillStyle = getComputedColor('--blue-glow'); ctx.fill();
-            ctx.strokeStyle = lineColor; ctx.lineWidth = 2; ctx.stroke();
-            ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fillStyle = '#5ba8e8'; ctx.fill();
-        });
+        ctx.fillStyle = textColor;
+        ctx.font = `bold ${Math.max(9, h * 0.04)}px ui-monospace, Menlo, Consolas, monospace`;
+        ctx.textAlign = 'center';
+        for (let hr = 0; hr <= 24; hr += 2) ctx.fillText(hr, hourToX(hr, programType), a.b + h * 0.06);
+        ctx.textAlign = 'right';
+        for (let t = TEMP_MIN; t <= TEMP_MAX; t += 2) ctx.fillText(t + '\u00B0', a.l - 4, tempToY(t, programType) + 3);
         
-        if (dragging !== null && schedules[programType][selectedDay][dragging]) {
-            const dp = schedules[programType][selectedDay][dragging];
-            const dx = hourToX(dp.hour, programType), dy = tempToY(dp.temp, programType);
-            ctx.strokeStyle = 'rgba(128,128,128,0.4)';
-            ctx.lineWidth = 1;
-            ctx.setLineDash([4, 4]);
-            ctx.beginPath(); ctx.moveTo(dx, a.t); ctx.lineTo(dx, a.b); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(a.l, dy); ctx.lineTo(a.r, dy); ctx.stroke();
-            ctx.setLineDash([]);
+        const pts = (schedules[programType][selectedDay] || []).slice().sort((a, b) => a.hour - b.hour);
+        if (pts.length > 0) {
+            ctx.strokeStyle = lineColor;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(hourToX(0, programType), tempToY(pts[0].temp, programType));
+            for (let i = 0; i < pts.length; i++) {
+                ctx.lineTo(hourToX(pts[i].hour, programType), tempToY(i === 0 ? pts[0].temp : pts[i-1].temp, programType));
+                ctx.lineTo(hourToX(pts[i].hour, programType), tempToY(pts[i].temp, programType));
+            }
+            ctx.lineTo(hourToX(24, programType), tempToY(pts[pts.length - 1].temp, programType));
+            ctx.stroke();
+            
+            pts.forEach(p => {
+                const x = hourToX(p.hour, programType), y = tempToY(p.temp, programType);
+                ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fillStyle = getComputedColor('--blue-glow'); ctx.fill();
+                ctx.strokeStyle = lineColor; ctx.lineWidth = 2; ctx.stroke();
+                ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fillStyle = '#5ba8e8'; ctx.fill();
+            });
+            
+            if (dragging !== null && schedules[programType][selectedDay][dragging]) {
+                const dp = schedules[programType][selectedDay][dragging];
+                const dx = hourToX(dp.hour, programType), dy = tempToY(dp.temp, programType);
+                ctx.strokeStyle = 'rgba(128,128,128,0.4)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath(); ctx.moveTo(dx, a.t); ctx.lineTo(dx, a.b); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(a.l, dy); ctx.lineTo(a.r, dy); ctx.stroke();
+                ctx.setLineDash([]);
+            }
         }
     }
 }
@@ -804,7 +916,8 @@ function findPoint(x, y, programType) {
     const selectedDay = selectedDays[programType];
     const pts = schedules[programType][selectedDay] || [];
     for (let i = 0; i < pts.length; i++) {
-        const dx = x - hourToX(pts[i].hour, programType), dy = y - tempToY(pts[i].temp, programType);
+        const ptY = programType === 'hotwater' ? stateToY(pts[i].state, programType) : tempToY(pts[i].temp, programType);
+        const dx = x - hourToX(pts[i].hour, programType), dy = y - ptY;
         if (Math.sqrt(dx*dx + dy*dy) < 12) return i;
     }
     return -1;
@@ -821,6 +934,24 @@ function setupCanvasEvents(canvas, programType) {
     
     const getProgramKey = () => programType === 'heating' ? 'heating_program' : 'hot_water_program';
     
+    const createPoint = (x, y) => {
+        const hour = Math.round(xToHour(x, programType));
+        if (programType === 'hotwater') {
+            return { hour: Math.max(0, Math.min(24, hour)), state: yToState(y, programType) };
+        } else {
+            return { hour: Math.max(0, Math.min(24, hour)), temp: Math.max(TEMP_MIN, Math.min(TEMP_MAX, Math.round(yToTemp(y, programType)))) };
+        }
+    };
+    
+    const updatePoint = (x, y) => {
+        const hour = Math.max(0, Math.min(24, Math.round(xToHour(x, programType))));
+        if (programType === 'hotwater') {
+            return { hour, state: yToState(y, programType) };
+        } else {
+            return { hour, temp: Math.max(TEMP_MIN, Math.min(TEMP_MAX, Math.round(yToTemp(y, programType)))) };
+        }
+    };
+    
     canvas.onmousedown = e => {
         const p = getPos(e, canvas), a = getArea(programType);
         const selectedDay = selectedDays[programType];
@@ -836,7 +967,7 @@ function setupCanvasEvents(canvas, programType) {
                 dragging = i;
             } else {
                 dragging = schedules[programType][selectedDay].length;
-                schedules[programType][selectedDay].push({ hour: Math.round(xToHour(p.x, programType)), temp: Math.round(yToTemp(p.y, programType)) });
+                schedules[programType][selectedDay].push(createPoint(p.x, p.y));
             }
             canvas.style.cursor = 'grabbing';
             pendingChanges[getProgramKey()] = true;
@@ -848,7 +979,7 @@ function setupCanvasEvents(canvas, programType) {
         const p = getPos(e, canvas);
         const selectedDay = selectedDays[programType];
         if (dragging !== null) {
-            schedules[programType][selectedDay][dragging] = { hour: Math.max(0, Math.min(24, Math.round(xToHour(p.x, programType)))), temp: Math.max(TEMP_MIN, Math.min(TEMP_MAX, Math.round(yToTemp(p.y, programType)))) };
+            schedules[programType][selectedDay][dragging] = updatePoint(p.x, p.y);
             drawTimeline(programType);
         } else {
             canvas.style.cursor = findPoint(p.x, p.y, programType) !== -1 ? 'grab' : 'crosshair';
@@ -895,7 +1026,7 @@ function setupCanvasEvents(canvas, programType) {
             dragging = i;
             pendingChanges[getProgramKey()] = true;
         } else {
-            schedules[programType][selectedDay].push({ hour: Math.round(xToHour(p.x, programType)), temp: Math.round(yToTemp(p.y, programType)) });
+            schedules[programType][selectedDay].push(createPoint(p.x, p.y));
             drawTimeline(programType);
             save({ [getProgramKey()]: encodeProgram(programType) });
         }
@@ -907,7 +1038,7 @@ function setupCanvasEvents(canvas, programType) {
         if (longPress) { clearTimeout(longPress); longPress = null; }
         if (dragging !== null && !longFired) {
             const p = getPos(e, canvas);
-            schedules[programType][selectedDay][dragging] = { hour: Math.max(0, Math.min(24, Math.round(xToHour(p.x, programType)))), temp: Math.max(TEMP_MIN, Math.min(TEMP_MAX, Math.round(yToTemp(p.y, programType)))) };
+            schedules[programType][selectedDay][dragging] = updatePoint(p.x, p.y);
             drawTimeline(programType);
         }
     };
