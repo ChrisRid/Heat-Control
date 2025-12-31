@@ -157,9 +157,9 @@
 
         <div class="card program hidden" id="programPanel">
             <!-- Program Tabs -->
-            <div class="program-tabs" id="programTabs">
+            <div class="program-tabs hidden" id="programTabs">
                 <button class="program-tab active" data-tab="heating">Heating Program</button>
-                <button class="program-tab hidden" data-tab="hotwater" id="hotWaterTab">Hot Water Program</button>
+                <button class="program-tab" data-tab="hotwater" id="hotWaterTab">Hot Water Program</button>
             </div>
             
             <!-- Heating Program Tab Content -->
@@ -652,8 +652,9 @@ function render() {
     $('modeProgram').classList.toggle('active', state.heatingProgramActive);
     $('programPanel').classList.toggle('hidden', !state.heatingProgramActive);
     
-    // Show/hide hot water tab based on hot_water_program_active
-    $('hotWaterTab').classList.toggle('hidden', !state.hotWaterProgramActive);
+    // Show/hide tabs based on hot_water_program_active
+    // If only heating is available, hide the entire tab bar
+    $('programTabs').classList.toggle('hidden', !state.hotWaterProgramActive);
     
     // If hot water is disabled and we're on that tab, switch to heating
     if (!state.hotWaterProgramActive && activeTab === 'hotwater') {
