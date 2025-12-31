@@ -633,7 +633,7 @@ app.post('/api/hub/auth', validateHubId('body'), async (req, res) => {
 app.get('/api/hub/state', requireHubAuth, async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT set_temp, boost_setting, heating_program, heating_program_active,
+            `SELECT set_temp, heating_boost, hot_water_boost, heating_program, heating_program_active,
                     hot_water_program, hot_water_program_active
              FROM hubs WHERE hub_id = $1`,
             [req.hubId]
@@ -674,7 +674,7 @@ app.post('/api/hub/temp', requireHubAuth, async (req, res) => {
 app.get('/api/hub/:id', requireAuth, async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT current_temp, set_temp, boost_setting, heating_program, heating_program_active,
+            `SELECT current_temp, set_temp, heating_boost, hot_water_boost, heating_program, heating_program_active,
                     hot_water_program, hot_water_program_active
              FROM hubs WHERE hub_id = $1`,
             [req.hubId]
@@ -690,7 +690,7 @@ app.get('/api/hub/:id', requireAuth, async (req, res) => {
 });
 
 app.patch('/api/hub/:id', requireAuth, async (req, res) => {
-    const { set_temp, boost_setting, heating_program, heating_program_active,
+    const { set_temp, heating_boost, hot_water_boost, heating_program, heating_program_active,
             hot_water_program, hot_water_program_active } = req.body;
     const updates = [];
     const values = [];
@@ -702,10 +702,16 @@ app.patch('/api/hub/:id', requireAuth, async (req, res) => {
         updates.push(`set_temp = $${idx++}`);
         values.push(validated);
     }
-    if (boost_setting !== undefined) {
-        const validated = validateBoostSetting(boost_setting);
-        if (validated === null) return sendError(res, 400, 'Invalid boost_setting (must be 0-3)');
-        updates.push(`boost_setting = $${idx++}`);
+    if (heating_boost !== undefined) {
+        const validated = validateBoostSetting(heating_boost);
+        if (validated === null) return sendError(res, 400, 'Invalid heating_boost (must be 0-3)');
+        updates.push(`heating_boost = $${idx++}`);
+        values.push(validated);
+    }
+    if (hot_water_boost !== undefined) {
+        const validated = validateBoostSetting(hot_water_boost);
+        if (validated === null) return sendError(res, 400, 'Invalid hot_water_boost (must be 0-3)');
+        updates.push(`hot_water_boost = $${idx++}`);
         values.push(validated);
     }
     if (heating_program !== undefined) {
