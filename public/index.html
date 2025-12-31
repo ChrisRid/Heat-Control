@@ -51,10 +51,8 @@
 
         .card { background: var(--bg2); border-radius: 24px; padding: 32px 40px; text-align: center; border: 1px solid var(--border); width: min(94vw, 440px); position: relative; margin-bottom: 12px; }
         .card:last-of-type { margin-bottom: 0; }
-        .theme-toggle { position: absolute; top: 20px; left: 24px; width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--blue-border); background: var(--blue-glow); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: all 0.2s; color: #fbbf24; }
-        .light-mode .theme-toggle { color: #6b7280; }
-        .theme-toggle:hover { transform: scale(1.1); }
-        .theme-toggle:active { transform: scale(0.95); }
+        .hotwater-indicator { position: absolute; top: 20px; left: 24px; font-size: 20px; opacity: 0; transition: opacity 0.3s; }
+        .hotwater-indicator.on { opacity: 1; animation: flicker 0.5s ease-in-out infinite alternate; }
         .heat { position: absolute; top: 20px; right: 24px; font-size: 20px; opacity: 0; transition: opacity 0.3s; }
         .heat.on { opacity: 1; animation: flicker 0.5s ease-in-out infinite alternate; }
         @keyframes flicker { 0% { opacity: 0.8; } 100% { opacity: 1; } }
@@ -137,7 +135,7 @@
 
     <div class="hidden" id="main">
         <div class="card">
-            <button class="theme-toggle" id="themeToggle" title="Toggle light/dark mode">&#x2600;</button>
+            <div class="hotwater-indicator" id="hotwater">&#x1F6B0;</div>
             <div class="heat" id="heat">&#x1F525;</div>
             <div class="label">Current Temperature</div>
             <div class="current"><span id="cur">--</span><span>&deg;C</span></div>
@@ -263,24 +261,13 @@ function initTheme() {
     if (isLight) {
         document.body.classList.add('light-mode');
     }
-    updateThemeIcon();
 }
 
 function toggleTheme() {
     const isLight = document.body.classList.toggle('light-mode');
     setCookie('theme', isLight ? 'light' : 'dark');
-    updateThemeIcon();
     if (state.heatingProgramActive) {
         drawTimeline(activeTab);
-    }
-}
-
-function updateThemeIcon() {
-    const toggle = document.getElementById('themeToggle');
-    if (toggle) {
-        const isLight = document.body.classList.contains('light-mode');
-        toggle.innerHTML = isLight ? '&#x1F319;' : '&#x2600;';
-        toggle.title = isLight ? 'Switch to dark mode' : 'Switch to light mode';
     }
 }
 
@@ -306,7 +293,9 @@ let state = {
     heatingProgram: '',
     hotWaterProgramActive: false,
     hotWaterBoost: 0,
-    hotWaterProgram: ''
+    hotWaterProgram: '',
+    heatingActive: false,
+    hotWaterActive: false
 };
 
 // Track selected day for each program type
@@ -329,7 +318,7 @@ const debouncedSave = createDebouncer(500);
 const $ = id => document.getElementById(id);
 const auth = $('auth'), main = $('main'), authIcon = $('authIcon'), authTitle = $('authTitle');
 const authMsg = $('authMsg'), authBtn = $('authBtn'), authErr = $('authErr');
-const heat = $('heat'), cur = $('cur'), tar = $('tar'), sync = $('sync');
+const heat = $('heat'), hotwater = $('hotwater'), cur = $('cur'), tar = $('tar'), sync = $('sync');
 const sessionInfo = $('sessionInfo'), revokeModal = $('revokeModal');
 const helpToggle = $('helpToggle'), helpContent = $('helpContent');
 
@@ -340,11 +329,6 @@ const heatingCtx = heatingCanvas.getContext('2d');
 const hotWaterCtx = hotWaterCanvas.getContext('2d');
 
 document.addEventListener('DOMContentLoaded', () => {
-    const themeToggle = $('themeToggle');
-    if (themeToggle) {
-        themeToggle.onclick = toggleTheme;
-    }
-    
     $('revokeCancel').onclick = () => {
         revokeModal.classList.add('hidden');
         helpContent.classList.remove('expanded');
@@ -546,6 +530,10 @@ async function fetchState() {
         if (!('hot_water_boost' in pendingChanges)) state.hotWaterBoost = d.hot_water_boost;
         if (!('hot_water_program' in pendingChanges)) decodeProgram(d.hot_water_program, 'hotwater');
         
+        // Active states (read-only from hub)
+        state.heatingActive = d.heating_active || false;
+        state.hotWaterActive = d.hot_water_active || false;
+        
         state.cur = d.current_temp;
         
         render();
@@ -568,8 +556,11 @@ async function fetchSessionCount() {
 
 function updateSessionInfo() {
     const deviceWord = sessionCount === 1 ? 'device' : 'devices';
-    sessionInfo.innerHTML = `There ${sessionCount === 1 ? 'is' : 'are'} currently <strong>${sessionCount}</strong> ${deviceWord} authorised on your hub.<br> <a id="revokeLink">Revoke all access<br></a>`;
+    const isLight = document.body.classList.contains('light-mode');
+    const themeText = isLight ? 'Switch to dark mode' : 'Switch to light mode';
+    sessionInfo.innerHTML = `There ${sessionCount === 1 ? 'is' : 'are'} currently <strong>${sessionCount}</strong> ${deviceWord} authorised on your hub.<br><a id="revokeLink">Revoke all access</a><br><a id="themeLink">${themeText}</a>`;
     $('revokeLink').onclick = () => revokeModal.classList.remove('hidden');
+    $('themeLink').onclick = () => { toggleTheme(); updateSessionInfo(); };
 }
 
 async function revokeAllSessions() {
@@ -636,7 +627,8 @@ function save(updates) {
 function render() {
     cur.textContent = state.cur !== null ? state.cur : '--';
     tar.textContent = state.tar;
-    heat.classList.toggle('on', state.cur !== null && state.cur < state.tar);
+    heat.classList.toggle('on', state.heatingActive);
+    hotwater.classList.toggle('on', state.hotWaterActive);
     
     // Heating boost buttons
     document.querySelectorAll('[data-heating-boost]').forEach(b => {
