@@ -634,7 +634,7 @@ app.get('/api/hub/state', requireHubAuth, async (req, res) => {
     try {
         const result = await pool.query(
             `SELECT set_temp, heating_boost, hot_water_boost, heating_program, heating_program_active,
-                    hot_water_program, hot_water_program_active
+                    hot_water_program, hot_water_program_active, heating_active, hot_water_active
              FROM hubs WHERE hub_id = $1`,
             [req.hubId]
         );
@@ -675,7 +675,7 @@ app.get('/api/hub/:id', requireAuth, async (req, res) => {
     try {
         const result = await pool.query(
             `SELECT current_temp, set_temp, heating_boost, hot_water_boost, heating_program, heating_program_active,
-                    hot_water_program, hot_water_program_active
+                    hot_water_program, hot_water_program_active, heating_active, hot_water_active
              FROM hubs WHERE hub_id = $1`,
             [req.hubId]
         );
