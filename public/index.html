@@ -165,11 +165,11 @@
             <!-- Heating Program Tab Content -->
             <div class="tab-content active" id="heatingContent">
                 <div class="label">Boost</div>
-                <div class="btn-group" id="boostBtns">
-                    <button class="opt active" data-boost="0">Boost<br>Off</button>
-                    <button class="opt" data-boost="1">Boost<br>+1 Hr</button>
-                    <button class="opt" data-boost="2">Boost<br>+2 Hrs</button>
-                    <button class="opt" data-boost="3">Boost<br>+3 Hrs</button>
+                <div class="btn-group" id="heatingBoostBtns">
+                    <button class="opt active" data-heating-boost="0">Boost<br>Off</button>
+                    <button class="opt" data-heating-boost="1">Boost<br>+1 Hr</button>
+                    <button class="opt" data-heating-boost="2">Boost<br>+2 Hrs</button>
+                    <button class="opt" data-heating-boost="3">Boost<br>+3 Hrs</button>
                 </div>
                 <div class="label" style="margin-top:16px">Weekly Program</div>
                 <div class="days" id="heatingDays"></div>
@@ -186,7 +186,14 @@
             
             <!-- Hot Water Program Tab Content -->
             <div class="tab-content" id="hotWaterContent">
-                <div class="label">Weekly Program</div>
+                <div class="label">Boost</div>
+                <div class="btn-group" id="hotWaterBoostBtns">
+                    <button class="opt active" data-hotwater-boost="0">Boost<br>Off</button>
+                    <button class="opt" data-hotwater-boost="1">Boost<br>+1 Hr</button>
+                    <button class="opt" data-hotwater-boost="2">Boost<br>+2 Hrs</button>
+                    <button class="opt" data-hotwater-boost="3">Boost<br>+3 Hrs</button>
+                </div>
+                <div class="label" style="margin-top:16px">Weekly Program</div>
                 <div class="days" id="hotWaterDays"></div>
                 <div class="timeline short"><canvas id="hotWaterCanvas"></canvas></div>
                 <div class="timeline-help">Tap to add &bull; Drag to move &bull; Long-press to delete</div>
@@ -295,9 +302,10 @@ let state = {
     cur: null, 
     tar: 21, 
     heatingProgramActive: false, 
-    boostSetting: 0, 
+    heatingBoost: 0, 
     heatingProgram: '',
     hotWaterProgramActive: false,
+    hotWaterBoost: 0,
     hotWaterProgram: ''
 };
 
@@ -489,12 +497,33 @@ function showMain() {
     initDays('hotwater', $('hotWaterDays'));
     setupCanvasEvents(heatingCanvas, 'heating');
     setupCanvasEvents(hotWaterCanvas, 'hotwater');
+    setupBoostButtons();
     fetchState();
     fetchSessionCount();
     pollTimer = setInterval(() => {
         fetchState();
         fetchSessionCount();
     }, POLL_INTERVAL_MS);
+}
+
+function setupBoostButtons() {
+    // Heating boost buttons
+    document.querySelectorAll('[data-heating-boost]').forEach(b => {
+        b.onclick = () => { 
+            state.heatingBoost = parseInt(b.dataset.heatingBoost); 
+            render(); 
+            save({ heating_boost: state.heatingBoost }); 
+        };
+    });
+    
+    // Hot water boost buttons
+    document.querySelectorAll('[data-hotwater-boost]').forEach(b => {
+        b.onclick = () => { 
+            state.hotWaterBoost = parseInt(b.dataset.hotwaterBoost); 
+            render(); 
+            save({ hot_water_boost: state.hotWaterBoost }); 
+        };
+    });
 }
 
 async function fetchState() {
@@ -509,11 +538,12 @@ async function fetchState() {
         
         if (!('set_temp' in pendingChanges)) state.tar = d.set_temp;
         if (!('heating_program_active' in pendingChanges)) state.heatingProgramActive = d.heating_program_active;
-        if (!('boost_setting' in pendingChanges)) state.boostSetting = d.boost_setting;
+        if (!('heating_boost' in pendingChanges)) state.heatingBoost = d.heating_boost;
         if (!('heating_program' in pendingChanges)) decodeProgram(d.heating_program, 'heating');
         
         // Hot water state
         state.hotWaterProgramActive = d.hot_water_program_active;
+        if (!('hot_water_boost' in pendingChanges)) state.hotWaterBoost = d.hot_water_boost;
         if (!('hot_water_program' in pendingChanges)) decodeProgram(d.hot_water_program, 'hotwater');
         
         state.cur = d.current_temp;
@@ -608,8 +638,14 @@ function render() {
     tar.textContent = state.tar;
     heat.classList.toggle('on', state.cur !== null && state.cur < state.tar);
     
-    document.querySelectorAll('[data-boost]').forEach(b => {
-        b.classList.toggle('active', parseInt(b.dataset.boost) === state.boostSetting);
+    // Heating boost buttons
+    document.querySelectorAll('[data-heating-boost]').forEach(b => {
+        b.classList.toggle('active', parseInt(b.dataset.heatingBoost) === state.heatingBoost);
+    });
+    
+    // Hot water boost buttons
+    document.querySelectorAll('[data-hotwater-boost]').forEach(b => {
+        b.classList.toggle('active', parseInt(b.dataset.hotwaterBoost) === state.hotWaterBoost);
     });
     
     $('modeManual').classList.toggle('active', !state.heatingProgramActive);
@@ -640,11 +676,7 @@ $('inc').onclick = () => {
     if (state.tar < TEMP_MAX) { state.tar++; render(); save({ set_temp: state.tar }); }
 };
 
-document.querySelectorAll('[data-boost]').forEach(b => {
-    b.onclick = () => { state.boostSetting = parseInt(b.dataset.boost); render(); save({ boost_setting: state.boostSetting }); };
-});
-
-$('modeManual').onclick = () => { state.heatingProgramActive = false; state.boostSetting = 0; render(); save({ heating_program_active: false, boost_setting: 0 }); };
+$('modeManual').onclick = () => { state.heatingProgramActive = false; state.heatingBoost = 0; render(); save({ heating_program_active: false, heating_boost: 0 }); };
 
 $('modeProgram').onclick = () => { state.heatingProgramActive = true; render(); save({ heating_program_active: true }); };
 
